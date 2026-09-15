@@ -1,0 +1,7 @@
+[package]
+name = "wasmcop-job"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
