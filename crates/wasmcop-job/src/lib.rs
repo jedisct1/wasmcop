@@ -54,6 +54,36 @@ pub enum Arg {
     Slot(usize),
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Report {
+    pub functions: Vec<FunctionExtent>,
+    pub iterations: Vec<IterationReport>,
+    /// Set when the harness itself failed.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionExtent {
+    pub local_index: u32,
+    pub address: u64,
+    pub length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IterationReport {
+    pub label: String,
+    /// How many Valgrind errors each call caused.
+    pub errors_per_call: Vec<u64>,
+    pub outcome: Outcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Outcome {
+    Completed,
+    Trap { message: String, out_of_bounds: bool },
+    Exit(i32),
+}
+
 mod hex_u128 {
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
