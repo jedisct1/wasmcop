@@ -1,0 +1,11 @@
+[package]
+name = "wasmcop-runner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wasmcop-job.workspace = true
+wasmer = { workspace = true, features = ["sys", "headless"] }
+wasmer-types.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
