@@ -8,7 +8,26 @@ pub struct Job {
     pub artifact: PathBuf,
     /// Where the runner writes its report.
     pub output: PathBuf,
+    pub poison: Poison,
     pub iterations: Vec<Iteration>,
+}
+
+/// Baseline runs use `None`, blame runs use `Only`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Poison {
+    All,
+    None,
+    Only(String),
+}
+
+impl Poison {
+    pub fn covers(&self, label: &str) -> bool {
+        match self {
+            Poison::All => true,
+            Poison::None => false,
+            Poison::Only(only) => only == label,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
