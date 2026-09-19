@@ -1,9 +1,9 @@
 use crate::vg;
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
-use wasmcop_job::{Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Report, Scalar, Step, ValType};
+use wasmcop_job::{Alloc, Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Report, Scalar, Step, ValType};
 use wasmer::sys::EngineBuilder;
-use wasmer::{Engine, Instance, Memory, Module, RuntimeError, Store, Value};
+use wasmer::{Engine, Instance, Memory, Module, RuntimeError, Store, Value, WASM_PAGE_SIZE};
 use wasmer_types::TrapCode;
 use wasmer_types::entity::EntityRef;
 
@@ -64,12 +64,14 @@ fn run_iteration(
         instance: &instance,
         memory,
         slots: HashMap::new(),
+        arena: None,
     };
     let mut report = IterationReport {
         label: iteration.label.clone(),
         errors_per_call: Vec::new(),
         outcome: Outcome::Completed,
     };
+    state.prepare_arena(store, iteration)?;
 
     for step in &iteration.steps {
         if let Some(outcome) = state.step(store, step, &mut report)? {
@@ -85,11 +87,50 @@ struct IterationState<'a> {
     instance: &'a Instance,
     memory: Option<Memory>,
     slots: HashMap<usize, Slot>,
+    arena: Option<Arena>,
+}
+
+struct Arena {
+    next: u64,
+    end: u64,
 }
 
 impl IterationState<'_> {
     fn memory(&self) -> Result<&Memory> {
         self.memory.as_ref().ok_or_else(|| anyhow!("this module has no memory the runner can use"))
+    }
+
+    /// Makes room for every buffer without a fixed address.
+    /// Sizes are u64 so a 4 GiB memory can't overflow.
+    fn prepare_arena(&mut self, store: &mut Store, iteration: &Iteration) -> Result<()> {
+        let mut size: u64 = 0;
+        for step in &iteration.steps {
+            if let Step::Buffer(buffer) = step
+                && buffer.at.is_none()
+            {
+                size += buffer.data.len() as u64 + u64::from(buffer.align);
+            }
+        }
+        if size == 0 {
+            return Ok(());
+        }
+        let request = u32::try_from(size).context("buffers do not fit in linear memory")?;
+        let base = match &self.job.alloc {
+            Alloc::Grow => {
+                let pages = request.div_ceil(WASM_PAGE_SIZE as u32);
+                let memory = self.memory()?.clone();
+                let previous = memory
+                    .grow(store, pages)
+                    .map_err(|e| anyhow!("growing memory by {pages} pages: {e}"))?;
+                u64::from(previous.0) * WASM_PAGE_SIZE as u64
+            }
+        };
+        let end = base + size;
+        if end > self.memory()?.view(store).data_size() {
+            bail!("arena {base:#x}+{size} is outside linear memory");
+        }
+        self.arena = Some(Arena { next: base, end });
+        Ok(())
     }
 
     fn step(
@@ -119,7 +160,15 @@ impl IterationState<'_> {
         }
         let address = match buffer.at {
             Some(address) => u64::from(address),
-            None => bail!("this buffer has no address"),
+            None => {
+                let arena = self.arena.as_mut().ok_or_else(|| anyhow!("no arena"))?;
+                let address = arena.next.next_multiple_of(u64::from(buffer.align));
+                arena.next = address + u64::from(length);
+                if arena.next > arena.end {
+                    bail!("arena exhausted");
+                }
+                address
+            }
         };
         let view = self.memory()?.view(store);
         if address + u64::from(length) > view.data_size() {

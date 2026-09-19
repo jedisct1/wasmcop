@@ -23,6 +23,7 @@ pub struct Job {
     pub output: PathBuf,
     pub poison: Poison,
     pub memory: MemoryBinding,
+    pub alloc: Alloc,
     pub iterations: Vec<Iteration>,
 }
 
@@ -50,6 +51,12 @@ pub enum MemoryBinding {
     Exported(String),
     /// Matches an entry in `Job::imports`.
     Imported { module: String, name: String },
+}
+
+/// Where buffers without a fixed address go.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Alloc {
+    Grow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
