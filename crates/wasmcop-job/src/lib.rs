@@ -3,6 +3,19 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `None` if the text isn't an even number of hex digits.
+pub fn from_hex(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 2 != 0 {
+        return None;
+    }
+    let digit = |b: u8| char::from(b).to_digit(16);
+    text.as_bytes().chunks_exact(2).map(|pair| Some((digit(pair[0])? * 16 + digit(pair[1])?) as u8)).collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub artifact: PathBuf,
