@@ -93,6 +93,15 @@ pub struct Buffer {
     pub data: Vec<u8>,
     pub align: u32,
     pub at: Option<u32>,
+    pub secret: Vec<SecretRange>,
+}
+
+/// `end` is exclusive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretRange {
+    pub start: u32,
+    pub end: u32,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

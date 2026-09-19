@@ -112,6 +112,11 @@ impl IterationState<'_> {
         if !buffer.align.is_power_of_two() {
             bail!("alignment {} is not a power of two", buffer.align);
         }
+        for range in &buffer.secret {
+            if range.start > range.end || range.end > length {
+                bail!("secret range {}..{} is outside a {length}-byte buffer", range.start, range.end);
+            }
+        }
         let address = match buffer.at {
             Some(address) => u64::from(address),
             None => bail!("this buffer has no address"),
@@ -123,6 +128,13 @@ impl IterationState<'_> {
         // Write first, because writing clears the secret marking.
         view.write(address, &buffer.data)
             .with_context(|| format!("writing {length} bytes at {address:#x}"))?;
+        for range in &buffer.secret {
+            if self.job.poison.covers(&range.label) {
+                let offset = (address + u64::from(range.start)) as usize;
+                let pointer = unsafe { view.data_ptr().add(offset) };
+                vg::make_undefined(pointer, (range.end - range.start) as usize);
+            }
+        }
         let address = u32::try_from(address).context("buffer address does not fit in an i32")?;
         self.slots.insert(buffer.slot, Slot::Buffer { address });
         Ok(())
