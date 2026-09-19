@@ -22,6 +22,7 @@ pub struct Job {
     /// Where the runner writes its report.
     pub output: PathBuf,
     pub poison: Poison,
+    pub memory: MemoryBinding,
     pub iterations: Vec<Iteration>,
 }
 
@@ -41,6 +42,14 @@ impl Poison {
             Poison::Only(only) => only == label,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MemoryBinding {
+    Unavailable,
+    Exported(String),
+    /// Matches an entry in `Job::imports`.
+    Imported { module: String, name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +77,7 @@ pub struct Iteration {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Step {
+    Buffer(Buffer),
     Call {
         function: String,
         args: Vec<Arg>,
@@ -77,12 +87,22 @@ pub enum Step {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Buffer {
+    pub slot: usize,
+    #[serde(with = "hex_bytes")]
+    pub data: Vec<u8>,
+    pub align: u32,
+    pub at: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Arg {
     Value {
         value: Scalar,
         /// Label of the secret, if it is one.
         secret: Option<String>,
     },
+    Address(usize),
     Slot(usize),
 }
 
@@ -116,6 +136,18 @@ pub enum Outcome {
     Exit(i32),
 }
 
+mod hex_bytes {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&super::to_hex(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        super::from_hex(&String::deserialize(d)?).ok_or_else(|| D::Error::custom("invalid hex string"))
+    }
+}
+
 mod hex_u128 {
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
@@ -125,5 +157,25 @@ mod hex_u128 {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u128, D::Error> {
         u128::from_str_radix(&String::deserialize(d)?, 16).map_err(D::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(text: &str) -> Result<Vec<u8>, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct Wrapper(#[serde(with = "hex_bytes")] Vec<u8>);
+        serde_json::from_str::<Wrapper>(&format!("{text:?}")).map(|w| w.0)
+    }
+
+    #[test]
+    fn hex() {
+        assert_eq!(decode("00ffA5").unwrap(), [0x00, 0xff, 0xa5]);
+        assert_eq!(decode("").unwrap(), Vec::<u8>::new());
+        for bad in ["abc", "zz", "+1", "\u{e9}", "\u{20ac}a"] {
+            assert!(decode(bad).is_err(), "{bad}");
+        }
     }
 }

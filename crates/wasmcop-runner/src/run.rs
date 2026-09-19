@@ -1,14 +1,15 @@
 use crate::vg;
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
-use wasmcop_job::{Arg, FunctionExtent, Iteration, IterationReport, Job, Outcome, Report, Scalar, Step, ValType};
+use wasmcop_job::{Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Report, Scalar, Step, ValType};
 use wasmer::sys::EngineBuilder;
-use wasmer::{Engine, Instance, Module, RuntimeError, Store, Value};
+use wasmer::{Engine, Instance, Memory, Module, RuntimeError, Store, Value};
 use wasmer_types::TrapCode;
 use wasmer_types::entity::EntityRef;
 
 #[derive(Clone)]
 enum Slot {
+    Buffer { address: u32 },
     Value(Value),
 }
 
@@ -43,6 +44,13 @@ fn function_extents(module: &Module) -> Result<Vec<FunctionExtent>> {
         .collect())
 }
 
+fn exported_memory(job: &Job, instance: &Instance) -> Result<Option<Memory>> {
+    Ok(match &job.memory {
+        MemoryBinding::Exported(name) => Some(instance.exports.get_memory(name).with_context(|| format!("memory export {name}"))?.clone()),
+        MemoryBinding::Unavailable | MemoryBinding::Imported { .. } => None,
+    })
+}
+
 fn run_iteration(
     job: &Job,
     module: &Module,
@@ -50,9 +58,11 @@ fn run_iteration(
     iteration: &Iteration,
 ) -> Result<IterationReport> {
     let instance = Instance::new(store, module, &wasmer::Imports::new()).context("instantiating")?;
+    let memory = exported_memory(job, &instance)?;
     let mut state = IterationState {
         job,
         instance: &instance,
+        memory,
         slots: HashMap::new(),
     };
     let mut report = IterationReport {
@@ -73,10 +83,15 @@ fn run_iteration(
 struct IterationState<'a> {
     job: &'a Job,
     instance: &'a Instance,
+    memory: Option<Memory>,
     slots: HashMap<usize, Slot>,
 }
 
 impl IterationState<'_> {
+    fn memory(&self) -> Result<&Memory> {
+        self.memory.as_ref().ok_or_else(|| anyhow!("this module has no memory the runner can use"))
+    }
+
     fn step(
         &mut self,
         store: &mut Store,
@@ -84,10 +99,33 @@ impl IterationState<'_> {
         report: &mut IterationReport,
     ) -> Result<Option<Outcome>> {
         match step {
+            Step::Buffer(buffer) => self.buffer(store, buffer)?,
             Step::Call { function, args, results } => {
                 return self.call(store, function, args, results, report);
             }
         }
+        Ok(None)
+    }
+
+    fn buffer(&mut self, store: &mut Store, buffer: &Buffer) -> Result<()> {
+        let length = u32::try_from(buffer.data.len()).context("buffer larger than 4 GiB")?;
+        if !buffer.align.is_power_of_two() {
+            bail!("alignment {} is not a power of two", buffer.align);
+        }
+        let address = match buffer.at {
+            Some(address) => u64::from(address),
+            None => bail!("this buffer has no address"),
+        };
+        let view = self.memory()?.view(store);
+        if address + u64::from(length) > view.data_size() {
+            bail!("buffer {address:#x}+{length} is outside linear memory");
+        }
+        // Write first, because writing clears the secret marking.
+        view.write(address, &buffer.data)
+            .with_context(|| format!("writing {length} bytes at {address:#x}"))?;
+        let address = u32::try_from(address).context("buffer address does not fit in an i32")?;
+        self.slots.insert(buffer.slot, Slot::Buffer { address });
+        Ok(())
     }
 
     fn argument(&self, arg: &Arg) -> Result<Value> {
@@ -96,6 +134,10 @@ impl IterationState<'_> {
                 let tainted = secret.as_ref().is_some_and(|label| self.job.poison.covers(label));
                 to_value(*value, tainted)
             }
+            Arg::Address(slot) => match self.slots.get(slot) {
+                Some(Slot::Buffer { address, .. }) => Value::I32(*address as i32),
+                _ => bail!("slot {slot} is not a buffer"),
+            },
             Arg::Slot(slot) => match self.slots.get(slot) {
                 Some(Slot::Value(value)) => value.clone(),
                 _ => bail!("slot {slot} is not a value"),
