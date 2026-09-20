@@ -7,6 +7,9 @@ use wasmer::{Engine, Instance, Memory, Module, RuntimeError, Store, Value, WASM_
 use wasmer_types::TrapCode;
 use wasmer_types::entity::EntityRef;
 
+/// Stops a small over-read from picking up the next buffer's secret.
+const BUFFER_GAP: u32 = 64;
+
 #[derive(Clone)]
 enum Slot {
     Buffer { address: u32 },
@@ -108,7 +111,7 @@ impl IterationState<'_> {
             if let Step::Buffer(buffer) = step
                 && buffer.at.is_none()
             {
-                size += buffer.data.len() as u64 + u64::from(buffer.align);
+                size += buffer.data.len() as u64 + u64::from(buffer.align) + u64::from(BUFFER_GAP);
             }
         }
         if size == 0 {
@@ -177,7 +180,7 @@ impl IterationState<'_> {
             None => {
                 let arena = self.arena.as_mut().ok_or_else(|| anyhow!("no arena"))?;
                 let address = arena.next.next_multiple_of(u64::from(buffer.align));
-                arena.next = address + u64::from(length);
+                arena.next = address + u64::from(length) + u64::from(BUFFER_GAP);
                 if arena.next > arena.end {
                     bail!("arena exhausted");
                 }
