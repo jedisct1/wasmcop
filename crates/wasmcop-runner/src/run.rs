@@ -116,6 +116,20 @@ impl IterationState<'_> {
         }
         let request = u32::try_from(size).context("buffers do not fit in linear memory")?;
         let base = match &self.job.alloc {
+            Alloc::Malloc(name) => {
+                let function = self.instance.exports.get_function(name)?;
+                let result = function
+                    .call(store, &[Value::I32(request as i32)])
+                    .map_err(|e| anyhow!("{name} trapped: {e}"))?;
+                let base = match result.first() {
+                    Some(Value::I32(base)) => *base as u32,
+                    _ => bail!("{name} did not return an i32"),
+                };
+                if base == 0 {
+                    bail!("{name}({size}) failed");
+                }
+                u64::from(base)
+            }
             Alloc::Grow => {
                 let pages = request.div_ceil(WASM_PAGE_SIZE as u32);
                 let memory = self.memory()?.clone();

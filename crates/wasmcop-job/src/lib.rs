@@ -56,6 +56,8 @@ pub enum MemoryBinding {
 /// Where buffers without a fixed address go.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Alloc {
+    /// An exported `(i32) -> i32` allocator, called once.
+    Malloc(String),
     Grow,
 }
 
