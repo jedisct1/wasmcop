@@ -1,0 +1,9 @@
+[package]
+name = "wasmcop-spec"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wasmcop-job.workspace = true
+anyhow.workspace = true
+wasmparser = "0.263"
