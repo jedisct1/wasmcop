@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use std::fmt;
 use wasmcop_job::{MemoryBinding, ValType};
-use wasmparser::{CompositeInnerType, ExternalKind, Parser, Payload};
+use wasmparser::{CompositeInnerType, ExternalKind, Parser, Payload, TypeRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -50,10 +50,28 @@ pub struct MemoryInfo {
     pub exports: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportItem {
+    Function(Signature),
+    Memory,
+    Table,
+    Global { ty: Type, mutable: bool },
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportShape {
+    pub module: String,
+    pub name: String,
+    pub item: ImportItem,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ModuleShape {
     pub functions: BTreeMap<String, Signature>,
     pub memories: Vec<MemoryInfo>,
+    pub imports: Vec<ImportShape>,
+    pub imported_functions: u32,
 }
 
 fn val_type(ty: wasmparser::ValType) -> Type {
@@ -110,6 +128,35 @@ impl ModuleShape {
                                 _ => None,
                             });
                         }
+                    }
+                }
+                Payload::ImportSection(reader) => {
+                    for import in reader.into_imports() {
+                        let import = import?;
+                        let qualified = (import.module.to_string(), import.name.to_string());
+                        let item = match import.ty {
+                            TypeRef::Func(index) => {
+                                let sig = signature(&types, index)?;
+                                functions.push(sig.clone());
+                                shape.imported_functions += 1;
+                                ImportItem::Function(sig)
+                            }
+                            TypeRef::Memory(ty) => {
+                                shape.memories.push(memory_info(&ty, Some(qualified.clone()))?);
+                                ImportItem::Memory
+                            }
+                            TypeRef::Table(_) => ImportItem::Table,
+                            TypeRef::Global(ty) => ImportItem::Global {
+                                ty: val_type(ty.content_type),
+                                mutable: ty.mutable,
+                            },
+                            _ => ImportItem::Other,
+                        };
+                        shape.imports.push(ImportShape {
+                            module: qualified.0,
+                            name: qualified.1,
+                            item,
+                        });
                     }
                 }
                 Payload::FunctionSection(reader) => {
