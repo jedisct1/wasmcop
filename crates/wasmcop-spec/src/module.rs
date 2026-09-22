@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use std::fmt;
-use wasmcop_job::ValType;
+use wasmcop_job::{MemoryBinding, ValType};
 use wasmparser::{CompositeInnerType, ExternalKind, Parser, Payload};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,9 +41,19 @@ impl fmt::Display for Signature {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryInfo {
+    pub initial: u32,
+    pub maximum: Option<u32>,
+    pub shared: bool,
+    pub import: Option<(String, String)>,
+    pub exports: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ModuleShape {
     pub functions: BTreeMap<String, Signature>,
+    pub memories: Vec<MemoryInfo>,
 }
 
 fn val_type(ty: wasmparser::ValType) -> Type {
@@ -55,6 +65,23 @@ fn val_type(ty: wasmparser::ValType) -> Type {
         wasmparser::ValType::V128 => Type::Val(ValType::V128),
         wasmparser::ValType::Ref(reference) => Type::Ref(reference.to_string()),
     }
+}
+
+fn pages(value: u64) -> Result<u32> {
+    u32::try_from(value).context("memory limit does not fit in 32 bits")
+}
+
+fn memory_info(ty: &wasmparser::MemoryType, import: Option<(String, String)>) -> Result<MemoryInfo> {
+    if ty.memory64 {
+        bail!("this module uses memory64, which wasmer 7.5.0 cannot compile");
+    }
+    Ok(MemoryInfo {
+        initial: pages(ty.initial)?,
+        maximum: ty.maximum.map(pages).transpose()?,
+        shared: ty.shared,
+        import,
+        exports: Vec::new(),
+    })
 }
 
 impl ModuleShape {
@@ -90,6 +117,11 @@ impl ModuleShape {
                         functions.push(signature(&types, index?)?);
                     }
                 }
+                Payload::MemorySection(reader) => {
+                    for ty in reader {
+                        shape.memories.push(memory_info(&ty?, None)?);
+                    }
+                }
                 Payload::ExportSection(reader) => {
                     for export in reader {
                         let export = export?;
@@ -100,6 +132,14 @@ impl ModuleShape {
                                     .context("export of an unknown function")?;
                                 shape.functions.insert(export.name.to_string(), sig.clone());
                             }
+                            ExternalKind::Memory => {
+                                shape
+                                    .memories
+                                    .get_mut(export.index as usize)
+                                    .context("export of an unknown memory")?
+                                    .exports
+                                    .push(export.name.to_string());
+                            }
                             _ => {}
                         }
                     }
@@ -108,5 +148,24 @@ impl ModuleShape {
             }
         }
         Ok(shape)
+    }
+
+    /// The memory buffers go in, or the reason there isn't one.
+    pub fn memory_binding(&self) -> Result<MemoryBinding, String> {
+        let memory = match self.memories.as_slice() {
+            [] => return Err("the module has no memory".to_string()),
+            [memory] => memory,
+            more => return Err(format!("the module has {} memories, and Wasmcop needs exactly one", more.len())),
+        };
+        if memory.shared {
+            return Err("the module's memory is shared".to_string());
+        }
+        if let Some((module, name)) = &memory.import {
+            return Ok(MemoryBinding::Imported { module: module.clone(), name: name.clone() });
+        }
+        match memory.exports.first() {
+            Some(name) => Ok(MemoryBinding::Exported(name.clone())),
+            None => Err("the module does not export its memory, so Wasmcop can't reach it".to_string()),
+        }
     }
 }
