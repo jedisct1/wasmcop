@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use wasmcop_job::{MemoryBinding, ValType};
-use wasmparser::{CompositeInnerType, ExternalKind, Parser, Payload, TypeRef};
+use wasmparser::{CompositeInnerType, ExternalKind, KnownCustom, Name, Parser, Payload, TypeRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -72,6 +72,8 @@ pub struct ModuleShape {
     pub memories: Vec<MemoryInfo>,
     pub imports: Vec<ImportShape>,
     pub imported_functions: u32,
+    /// From the name section if there is one, otherwise from exports.
+    pub function_names: HashMap<u32, String>,
 }
 
 fn val_type(ty: wasmparser::ValType) -> Type {
@@ -178,6 +180,7 @@ impl ModuleShape {
                                     .get(export.index as usize)
                                     .context("export of an unknown function")?;
                                 shape.functions.insert(export.name.to_string(), sig.clone());
+                                shape.function_names.entry(export.index).or_insert_with(|| export.name.to_string());
                             }
                             ExternalKind::Memory => {
                                 shape
@@ -188,6 +191,17 @@ impl ModuleShape {
                                     .push(export.name.to_string());
                             }
                             _ => {}
+                        }
+                    }
+                }
+                Payload::CustomSection(reader) => {
+                    if let KnownCustom::Name(names) = reader.as_known() {
+                        for name in names {
+                            if let Ok(Name::Function(map)) = name {
+                                for naming in map.into_iter().flatten() {
+                                    shape.function_names.insert(naming.index, naming.name.to_string());
+                                }
+                            }
                         }
                     }
                 }
