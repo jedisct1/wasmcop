@@ -1,6 +1,11 @@
 use anyhow::{Result, bail};
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Statement {
+    Call(Call),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Call {
     pub function: String,
     pub args: Vec<Arg>,

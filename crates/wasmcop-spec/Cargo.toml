@@ -7,3 +7,9 @@ edition.workspace = true
 wasmcop-job.workspace = true
 anyhow.workspace = true
 wasmparser = "0.263"
+turboshake = "0.7.1"
+rand_chacha = "0.10"
+rand_core = "0.10.1"
+
+[dev-dependencies]
+wat = "1.263"
