@@ -25,6 +25,7 @@ pub enum Value {
     Rand,
     Bytes { len: u32, fill: Fill, options: BufferOptions },
     Hex { bytes: Vec<u8>, options: BufferOptions },
+    Out { len: u32, options: BufferOptions },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,6 +266,7 @@ impl<'a> Parser<'a> {
                 "rand" => Ok(Value::Rand),
                 "bytes" => self.bytes(),
                 "hex" => self.hex(),
+                "out" => self.out(),
                 _ => self.error(&format!("unknown value `{identifier}`")),
             };
         }
@@ -339,6 +341,20 @@ impl<'a> Parser<'a> {
         Ok(bytes)
     }
 
+    fn out(&mut self) -> Result<Value> {
+        self.open()?;
+        let len = self.u32_value("a byte count")?;
+        let mut options = BufferOptions::default();
+        while self.eat(',') {
+            self.option(&mut options)?;
+        }
+        self.close()?;
+        if options.secret.is_some() {
+            return self.error("output buffers start out public");
+        }
+        Ok(Value::Out { len, options })
+    }
+
     fn option(&mut self, options: &mut BufferOptions) -> Result<()> {
         let name = self.require_identifier("an option")?;
         self.expect('=')?;
@@ -397,6 +413,12 @@ mod tests {
         assert_eq!(arg_of("bytes(16, ones)").value, Value::Bytes { len: 16, fill: Fill::Ones, options: plain.clone() });
         assert_eq!(arg_of("bytes(16, 0xa5)").value, Value::Bytes { len: 16, fill: Fill::Byte(0xa5), options: plain.clone() });
         assert_eq!(arg_of("hex(00ffA5)").value, Value::Hex { bytes: vec![0, 255, 165], options: plain.clone() });
+        assert_eq!(arg_of("out(64)").value, Value::Out { len: 64, options: plain });
+        let options = BufferOptions { align: Some(64), at: Some(4096), secret: Some((16, 48)) };
+        assert_eq!(
+            arg_of("bytes(64, secret=16..48, align=64, at=4096)").value,
+            Value::Bytes { len: 64, fill: Fill::Random, options }
+        );
     }
 
     #[test]
@@ -407,6 +429,7 @@ mod tests {
         assert!(parse_call("f(hex(abc))").unwrap_err().to_string().contains("even number"));
         assert!(parse_call("f(1) g").is_err());
         assert!(parse_call("f(bytes(1, 256))").is_err());
+        assert!(parse_call("f(out(1, secret=0..1))").is_err());
         assert!(parse_call("f(bytes(99999999999))").is_err());
         assert!(parse_call("f(\u{20ac})").is_err());
     }

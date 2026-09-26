@@ -212,6 +212,12 @@ impl Walker<'_> {
                 let range = secret_range(len, arg.secret, options, label)?;
                 self.buffer(bytes.clone(), range, options, label)
             }
+            Value::Out { len, options } => {
+                if arg.secret {
+                    bail!("output buffers start out public. For a secret initial value use `secret bytes({len}, zero)`");
+                }
+                self.buffer(vec![0; *len as usize], None, options, label)
+            }
         }
     }
 
@@ -365,7 +371,7 @@ fn secret_range(len: u32, secret: bool, options: &BufferOptions, label: &str) ->
 
 fn is_buffer(arg: &Arg, ty: ValType) -> bool {
     match arg.value {
-        Value::Bytes { .. } => true,
+        Value::Bytes { .. } | Value::Out { .. } => true,
         Value::Hex { .. } => ty != ValType::V128,
         _ => false,
     }
