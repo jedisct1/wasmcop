@@ -23,6 +23,22 @@ pub enum Value {
     Int(i128),
     Float(f64),
     Rand,
+    Bytes { len: u32, fill: Fill, options: BufferOptions },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fill {
+    Random,
+    Zero,
+    Ones,
+    Byte(u8),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BufferOptions {
+    pub align: Option<u32>,
+    pub at: Option<u32>,
+    pub secret: Option<(u32, u32)>,
 }
 
 pub fn parse_call(input: &str) -> Result<Call> {
@@ -172,6 +188,32 @@ impl<'a> Parser<'a> {
         Some(&rest[..end])
     }
 
+    fn integer(&mut self, what: &str) -> Result<i128> {
+        let start = self.pos;
+        let Some(text) = self.number_text() else {
+            return self.error(&format!("expected {what}"));
+        };
+        match parse_integer(text) {
+            Some(value) => Ok(value),
+            None => {
+                self.pos = start;
+                self.error(&format!("expected {what}"))
+            }
+        }
+    }
+
+    fn u32_value(&mut self, what: &str) -> Result<u32> {
+        let start = self.pos;
+        let value = self.integer(what)?;
+        match u32::try_from(value) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                self.pos = start;
+                self.error(&format!("{what} must fit in 32 bits"))
+            }
+        }
+    }
+
     fn peek_is(&mut self, expected: char) -> bool {
         self.skip_space();
         self.peek() == Some(expected)
@@ -220,6 +262,7 @@ impl<'a> Parser<'a> {
         if let Some(identifier) = self.identifier() {
             return match identifier.as_str() {
                 "rand" => Ok(Value::Rand),
+                "bytes" => self.bytes(),
                 _ => self.error(&format!("unknown value `{identifier}`")),
             };
         }
@@ -237,6 +280,58 @@ impl<'a> Parser<'a> {
                 self.error("expected a number")
             }
         }
+    }
+
+    fn bytes(&mut self) -> Result<Value> {
+        self.open()?;
+        let len = self.u32_value("a byte count")?;
+        let mut fill = Fill::Random;
+        let mut options = BufferOptions::default();
+        while self.eat(',') {
+            match self.peek_identifier().as_deref() {
+                Some("zero") => {
+                    self.identifier();
+                    fill = Fill::Zero;
+                }
+                Some("ones") => {
+                    self.identifier();
+                    fill = Fill::Ones;
+                }
+                Some(_) => self.option(&mut options)?,
+                None => {
+                    let start = self.pos;
+                    let value = self.integer("a fill byte")?;
+                    match u8::try_from(value) {
+                        Ok(byte) => fill = Fill::Byte(byte),
+                        Err(_) => {
+                            self.pos = start;
+                            return self.error("a fill byte must be between 0 and 255");
+                        }
+                    }
+                }
+            }
+        }
+        self.close()?;
+        Ok(Value::Bytes { len, fill, options })
+    }
+
+    fn option(&mut self, options: &mut BufferOptions) -> Result<()> {
+        let name = self.require_identifier("an option")?;
+        self.expect('=')?;
+        match name.as_str() {
+            "align" => options.align = Some(self.u32_value("an alignment")?),
+            "at" => options.at = Some(self.u32_value("an address")?),
+            "secret" => {
+                let start = self.u32_value("the start of a range")?;
+                if !self.rest().starts_with("..") {
+                    return self.error("expected `..`");
+                }
+                self.pos += 2;
+                options.secret = Some((start, self.u32_value("the end of a range")?));
+            }
+            _ => return self.error(&format!("unknown option `{name}`")),
+        }
+        Ok(())
     }
 }
 
@@ -271,11 +366,22 @@ mod tests {
         let secret = arg_of("secret rand");
         assert!(secret.secret);
         assert_eq!(secret.value, Value::Rand);
+
+        let plain = BufferOptions::default();
+        assert_eq!(arg_of("bytes(16)").value, Value::Bytes { len: 16, fill: Fill::Random, options: plain.clone() });
+        assert_eq!(arg_of("bytes(16, zero)").value, Value::Bytes { len: 16, fill: Fill::Zero, options: plain.clone() });
+        assert_eq!(arg_of("bytes(16, ones)").value, Value::Bytes { len: 16, fill: Fill::Ones, options: plain.clone() });
+        assert_eq!(arg_of("bytes(16, 0xa5)").value, Value::Bytes { len: 16, fill: Fill::Byte(0xa5), options: plain.clone() });
     }
 
     #[test]
     fn bad_input_is_an_error() {
+        let error = parse_call("f(bytes(16, secret=4))").unwrap_err().to_string();
+        assert!(error.contains("expected `..`"), "{error}");
+        assert!(error.contains('^'), "{error}");
         assert!(parse_call("f(1) g").is_err());
+        assert!(parse_call("f(bytes(1, 256))").is_err());
+        assert!(parse_call("f(bytes(99999999999))").is_err());
         assert!(parse_call("f(\u{20ac})").is_err());
     }
 }
