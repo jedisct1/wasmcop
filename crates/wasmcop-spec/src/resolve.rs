@@ -143,7 +143,7 @@ fn derive(seed: u64, test: &str, scope: u32, item: u32) -> [u8; 32] {
 
 #[derive(Clone)]
 enum Binding {
-    Buffer { slot: usize },
+    Buffer { slot: usize, len: u32 },
     Scalar { literal: Literal, secret: Option<String> },
 }
 
@@ -172,6 +172,10 @@ impl Walker<'_> {
         match statement {
             Statement::Call(call) => self.call(call),
         }
+    }
+
+    fn lookup(&self, name: &str) -> Result<Binding> {
+        self.bindings.get(name).cloned().ok_or_else(|| anyhow!("nothing is named `{name}`"))
     }
 
     fn require_memory(&self, what: &str) -> Result<()> {
@@ -218,6 +222,10 @@ impl Walker<'_> {
                 }
                 self.buffer(vec![0; *len as usize], None, options, label)
             }
+            Value::Len(name) => match self.lookup(name)? {
+                Binding::Buffer { len, .. } => Ok(self.scalar(Literal::Int(len.into()), arg.secret, label)),
+                _ => bail!("len needs a buffer, and {name} isn't one"),
+            },
         }
     }
 
@@ -274,6 +282,7 @@ impl Walker<'_> {
 
     fn buffer(&mut self, data: Vec<u8>, secret: Option<(u32, u32)>, options: &BufferOptions, label: &str) -> Result<Binding> {
         self.require_memory("a buffer")?;
+        let len = data.len() as u32;
         let mut ranges = Vec::new();
         let slot = self.slot();
         if let Some((start, end)) = secret {
@@ -285,7 +294,7 @@ impl Walker<'_> {
             bail!("alignment {align} is not a power of two");
         }
         self.steps.push(Step::Buffer(Buffer { slot, data, align, at: options.at, secret: ranges }));
-        Ok(Binding::Buffer { slot })
+        Ok(Binding::Buffer { slot, len })
     }
 
     fn call(&mut self, call: &Call) -> Result<()> {
@@ -303,10 +312,16 @@ impl Walker<'_> {
         }
         let (params, results) = plain_signature(signature, &call.function)?;
 
+        // Buffers go first so that `len(m)` can come before `m`.
+        // Everything else is resolved left to right.
         let mut declared: Vec<Option<Binding>> = vec![None; call.args.len()];
+        let mut buffers_in_call = HashMap::new();
         for (index, arg) in call.args.iter().enumerate() {
             if is_buffer(arg, params[index]) {
                 let binding = self.declare(arg, &argument_label(arg, &call.function, index))?;
+                if let Some(name) = &arg.name {
+                    buffers_in_call.insert(name.as_str(), binding.clone());
+                }
                 declared[index] = Some(binding);
             }
         }
@@ -324,6 +339,10 @@ impl Walker<'_> {
                         bail!("a v128 value is exactly 16 bytes");
                     };
                     self.scalar(Literal::Bits(u128::from_le_bytes(bytes)), arg.secret, &label)
+                }
+                (None, Value::Len(name)) if buffers_in_call.contains_key(name.as_str()) => {
+                    let Some(Binding::Buffer { len, .. }) = buffers_in_call.get(name.as_str()) else { unreachable!() };
+                    self.scalar(Literal::Int((*len).into()), arg.secret, &label)
                 }
                 (None, _) => self.declare(arg, &label)?,
             };

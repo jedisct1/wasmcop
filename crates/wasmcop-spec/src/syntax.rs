@@ -26,6 +26,7 @@ pub enum Value {
     Bytes { len: u32, fill: Fill, options: BufferOptions },
     Hex { bytes: Vec<u8>, options: BufferOptions },
     Out { len: u32, options: BufferOptions },
+    Len(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,6 +268,12 @@ impl<'a> Parser<'a> {
                 "bytes" => self.bytes(),
                 "hex" => self.hex(),
                 "out" => self.out(),
+                "len" => {
+                    self.open()?;
+                    let name = self.require_identifier("the name of a buffer")?;
+                    self.close()?;
+                    Ok(Value::Len(name))
+                }
                 _ => self.error(&format!("unknown value `{identifier}`")),
             };
         }
@@ -397,6 +404,12 @@ mod tests {
 
     #[test]
     fn arguments() {
+        let call = parse_call("mac(tag: out(32), m: bytes(64), len(m), k: secret bytes(32))").unwrap();
+        assert_eq!(call.function, "mac");
+        assert_eq!(call.args[0].name.as_deref(), Some("tag"));
+        assert_eq!(call.args[2].value, Value::Len("m".to_string()));
+        assert!(call.args[3].secret && !call.args[1].secret);
+
         assert_eq!(arg_of("42").value, Value::Int(42));
         assert_eq!(arg_of("0x2a").value, Value::Int(42));
         assert_eq!(arg_of("-1").value, Value::Int(-1));
