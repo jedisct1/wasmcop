@@ -1,7 +1,16 @@
+//! Parses calls like `mac(tag: out(32), m: bytes(64), len(m), k: secret bytes(32))` and multi-step scripts.
+
 use anyhow::{Result, bail};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    Bind { names: Vec<String>, value: Bound },
+    Call(Call),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Bound {
+    Arg(Arg),
     Call(Call),
 }
 
@@ -27,6 +36,7 @@ pub enum Value {
     Hex { bytes: Vec<u8>, options: BufferOptions },
     Out { len: u32, options: BufferOptions },
     Len(String),
+    Ref(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +62,24 @@ pub fn parse_call(input: &str) -> Result<Call> {
         return parser.error("unexpected text after the call");
     }
     Ok(call)
+}
+
+/// One statement per line.
+/// `;` also separates statements.
+pub fn parse_script(input: &str) -> Result<Vec<Statement>> {
+    let mut parser = Parser::new(input);
+    let mut statements = Vec::new();
+    loop {
+        parser.skip_blank_lines();
+        if parser.at_end() {
+            return Ok(statements);
+        }
+        statements.push(parser.statement()?);
+        parser.skip_space();
+        if !parser.at_end() && !parser.at_statement_end() {
+            return parser.error("expected the end of the statement");
+        }
+    }
 }
 
 struct Parser<'a> {
@@ -89,12 +117,25 @@ impl<'a> Parser<'a> {
         self.pos >= self.input.len()
     }
 
+    fn at_statement_end(&self) -> bool {
+        matches!(self.peek(), Some('\n' | ';'))
+    }
+
     fn skip_space(&mut self) {
         while let Some(c) = self.peek() {
             if c == ' ' || c == '\t' || c == '\r' || (c == '\n' && self.depth > 0) {
                 self.pos += c.len_utf8();
             } else {
                 break;
+            }
+        }
+    }
+
+    fn skip_blank_lines(&mut self) {
+        while let Some(c) = self.peek() {
+            match c {
+                ' ' | '\t' | '\r' | '\n' | ';' => self.pos += 1,
+                _ => break,
             }
         }
     }
@@ -217,6 +258,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn statement(&mut self) -> Result<Statement> {
+        let name = self.require_identifier("a statement")?;
+        if self.peek_is('(') {
+            return Ok(Statement::Call(self.call_args(name)?));
+        }
+        let mut names = vec![name];
+        while self.eat(',') {
+            names.push(self.require_identifier("a name")?);
+        }
+        self.expect('=')?;
+        let value = self.bound()?;
+        Ok(Statement::Bind { names, value })
+    }
+
     fn peek_is(&mut self, expected: char) -> bool {
         self.skip_space();
         self.peek() == Some(expected)
@@ -240,6 +295,22 @@ impl<'a> Parser<'a> {
         }
         self.close()?;
         Ok(Call { function, args })
+    }
+
+    fn bound(&mut self) -> Result<Bound> {
+        let saved = self.pos;
+        if let Some(name) = self.identifier()
+            && !is_value_keyword(&name)
+            && self.peek_is('(')
+        {
+            return Ok(Bound::Call(self.call_args(name)?));
+        }
+        self.pos = saved;
+        let arg = self.arg()?;
+        if arg.name.is_some() {
+            return self.error("a binding is already named");
+        }
+        Ok(Bound::Arg(arg))
     }
 
     fn arg(&mut self) -> Result<Arg> {
@@ -274,7 +345,7 @@ impl<'a> Parser<'a> {
                     self.close()?;
                     Ok(Value::Len(name))
                 }
-                _ => self.error(&format!("unknown value `{identifier}`")),
+                _ => Ok(Value::Ref(identifier)),
             };
         }
         let start = self.pos;
@@ -382,6 +453,10 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn is_value_keyword(name: &str) -> bool {
+    matches!(name, "bytes" | "hex" | "out" | "len")
+}
+
 fn parse_integer(text: &str) -> Option<i128> {
     let (negative, digits) = match text.strip_prefix('-') {
         Some(digits) => (true, digits),
@@ -435,6 +510,13 @@ mod tests {
     }
 
     #[test]
+    fn script_with_every_statement_kind() {
+        let statements = parse_script("x = bytes(4)\ny = f(x)").unwrap();
+        assert!(matches!(&statements[0], Statement::Bind { value: Bound::Arg(_), .. }));
+        assert!(matches!(&statements[1], Statement::Bind { value: Bound::Call(_), .. }));
+    }
+
+    #[test]
     fn bad_input_is_an_error() {
         let error = parse_call("f(bytes(16, secret=4))").unwrap_err().to_string();
         assert!(error.contains("expected `..`"), "{error}");
@@ -443,7 +525,9 @@ mod tests {
         assert!(parse_call("f(1) g").is_err());
         assert!(parse_call("f(bytes(1, 256))").is_err());
         assert!(parse_call("f(out(1, secret=0..1))").is_err());
+        assert!(parse_script("f(1) g(2)").is_err());
         assert!(parse_call("f(bytes(99999999999))").is_err());
         assert!(parse_call("f(\u{20ac})").is_err());
+        assert!(parse_script("x = bytes(4) \u{20ac}").is_err());
     }
 }

@@ -1,7 +1,7 @@
 //! Turns parsed tests into concrete steps for the runner, checking them against the module.
 
 use crate::module::{ModuleShape, Signature, Type};
-use crate::syntax::{Arg, BufferOptions, Call, Fill, Statement, Value};
+use crate::syntax::{Arg, Bound, BufferOptions, Call, Fill, Statement, Value};
 use anyhow::{Context, Result, anyhow, bail};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{Rng, SeedableRng};
@@ -145,6 +145,7 @@ fn derive(seed: u64, test: &str, scope: u32, item: u32) -> [u8; 32] {
 enum Binding {
     Buffer { slot: usize, len: u32 },
     Scalar { literal: Literal, secret: Option<String> },
+    Result { slot: usize, ty: ValType },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -170,7 +171,16 @@ struct Walker<'a> {
 impl Walker<'_> {
     fn statement(&mut self, statement: &Statement) -> Result<()> {
         match statement {
-            Statement::Call(call) => self.call(call),
+            Statement::Bind { names, value: Bound::Call(call) } => self.call(call, names),
+            Statement::Bind { names, value: Bound::Arg(arg) } => {
+                let [name] = names.as_slice() else {
+                    bail!("only a function call can bind several names");
+                };
+                let binding = self.declare(arg, name)?;
+                self.bindings.insert(name.clone(), binding);
+                Ok(())
+            }
+            Statement::Call(call) => self.call(call, &[]),
         }
     }
 
@@ -226,6 +236,12 @@ impl Walker<'_> {
                 Binding::Buffer { len, .. } => Ok(self.scalar(Literal::Int(len.into()), arg.secret, label)),
                 _ => bail!("len needs a buffer, and {name} isn't one"),
             },
+            Value::Ref(name) => {
+                if arg.secret {
+                    bail!("`{name}` is already defined, so mark it secret where it is defined");
+                }
+                self.lookup(name)
+            }
         }
     }
 
@@ -297,7 +313,7 @@ impl Walker<'_> {
         Ok(Binding::Buffer { slot, len })
     }
 
-    fn call(&mut self, call: &Call) -> Result<()> {
+    fn call(&mut self, call: &Call, names: &[String]) -> Result<()> {
         let signature = self.shape.functions.get(&call.function).ok_or_else(|| {
             anyhow!("the module has no exported function `{}`. `wasmcop list` shows what it exports", call.function)
         })?;
@@ -309,6 +325,9 @@ impl Walker<'_> {
                 signature,
                 call.args.len()
             );
+        }
+        if !names.is_empty() && names.len() != signature.results.len() {
+            bail!("{} returns {} values, but {} names were given", call.function, signature.results.len(), names.len());
         }
         let (params, results) = plain_signature(signature, &call.function)?;
 
@@ -352,7 +371,12 @@ impl Walker<'_> {
             args.push(self.argument(binding, params[index], &call.function, index)?);
         }
 
-        let slots = vec![None; results.len()];
+        let mut slots = vec![None; results.len()];
+        for (index, name) in names.iter().enumerate() {
+            let slot = self.slot();
+            slots[index] = Some(slot);
+            self.bindings.insert(name.clone(), Binding::Result { slot, ty: results[index] });
+        }
         self.steps.push(Step::Call { function: call.function.clone(), args, results: slots });
         Ok(())
     }
@@ -365,6 +389,12 @@ impl Walker<'_> {
                     bail!("{}: buffers are passed as i32 pointers, but this parameter is {}", context(), Type::Val(ty));
                 }
                 Ok(job::Arg::Address(slot))
+            }
+            Binding::Result { slot, ty: result } => {
+                if result != ty {
+                    bail!("{}: expected {}, but this value is {}", context(), Type::Val(ty), Type::Val(result));
+                }
+                Ok(job::Arg::Slot(slot))
             }
             Binding::Scalar { literal, secret } => {
                 let value = typed(literal, ty).with_context(context)?;
@@ -432,7 +462,7 @@ fn typed(literal: Literal, ty: ValType) -> Result<Scalar> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syntax::parse_call;
+    use crate::syntax::parse_script;
 
     fn options(iterations: u32) -> Options {
         Options { seed: 7, iterations, ..Options::default() }
@@ -440,12 +470,18 @@ mod tests {
 
     fn resolve_with(module: &str, script: &str, options: &Options) -> Result<Resolved> {
         let shape = ModuleShape::parse(&wat::parse_str(module)?)?;
-        let test = TestCase { name: "t".to_string(), statements: vec![Statement::Call(parse_call(script)?)] };
+        let test = TestCase { name: "t".to_string(), statements: parse_script(script)? };
         resolve(&test, &shape, options)
     }
 
     fn try_resolve(module: &str, script: &str, iterations: u32) -> Result<Resolved> {
         resolve_with(module, script, &options(iterations))
+    }
+
+    fn value_arg(resolved: &Resolved, step: usize, arg: usize) -> Scalar {
+        let Step::Call { args, .. } = &resolved.job.iterations[0].steps[step] else { panic!() };
+        let job::Arg::Value { value, .. } = &args[arg] else { panic!() };
+        *value
     }
 
     const F: &str = r#"(func (export "f") (param i32) (result i32) (i32.const 0))"#;
@@ -467,6 +503,8 @@ mod tests {
             try_resolve(module, "f(bytes(4))", 1).unwrap();
         }
 
+        let malloc = r#"(module (memory (export "m") 1) (func (export "malloc") (param i32) (result i32) (i32.const 64)))"#;
+        assert!(matches!(try_resolve(malloc, "", 1).unwrap().job.alloc, Alloc::Malloc(_)));
         for (module, reason) in [
             (&unexported, "does not export"),
             (&shared, "shared"),
@@ -487,19 +525,88 @@ mod tests {
             (func (export "two") (result i32 i32) (i32.const 0) (i32.const 1))
             (func (export "fr") (param funcref))
             (func (export "er") (result externref) (ref.null extern)))"#;
+        try_resolve(module, "a, b = two()", 1).unwrap();
         for (script, reason) in [
             ("g(1)", "no exported function"),
             ("f(1, 2)", "takes 1 arguments"),
+            ("a = two()", "returns 2 values"),
             ("fr(1)", "reference types"),
             ("er()", "reference types"),
             ("wide(bytes(4))", "i32 pointers"),
             ("f(0x1ffffffff)", "doesn't fit"),
             ("f(1.5)", "float"),
+            ("f(nope)", "nothing is named"),
+            ("x = out(4)\nf(secret x)", "already defined"),
             ("f(bytes(4, secret=2..9))", "doesn't fit"),
             ("f(secret bytes(4, secret=0..1))", "marked secret twice"),
         ] {
             let error = format!("{:#}", try_resolve(module, script, 1).unwrap_err());
             assert!(error.contains(reason), "{script}: {error}");
         }
+    }
+
+    #[test]
+    fn named_arguments_can_be_used_anywhere() {
+        let module = r#"(module (memory (export "m") 1)
+            (func (export "f") (param i32 i32) (result i32) (i32.const 0))
+            (func (export "g") (param i32))
+            (func (export "three") (param i32 i32 i32))
+            (func (export "v") (param v128))
+            (func (export "vv") (param v128 v128)))"#;
+
+        let resolved = try_resolve(module, "f(n: len(m), m: bytes(5))\ng(n)", 1).unwrap();
+        assert_eq!(value_arg(&resolved, 1, 0).bits, 5);
+        assert_eq!(value_arg(&resolved, 2, 0).bits, 5);
+
+        let vector = "000102030405060708090a0b0c0d0e0f";
+        let resolved = try_resolve(module, &format!("v(x: hex({vector}))\nv(x)"), 1).unwrap();
+        assert_eq!(value_arg(&resolved, 0, 0), value_arg(&resolved, 1, 0));
+
+        let resolved = try_resolve(module, "n = 9\nf(n: len(m), m: bytes(5))\ng(n)", 1).unwrap();
+        assert_eq!(value_arg(&resolved, 2, 0).bits, 5);
+
+        // Within one call, a reference sees what came before it, replacing any older binding.
+        for prefix in ["", "n = 9\n"] {
+            let resolved = try_resolve(module, &format!("{prefix}three(n: len(m), n, m: bytes(5))"), 1).unwrap();
+            assert_eq!(value_arg(&resolved, 1, 1).bits, 5);
+        }
+        for prefix in ["", "x = 0\n"] {
+            let script = format!("{prefix}vv(x: secret hex({vector}), x)");
+            let resolved = try_resolve(module, &script, 1).unwrap();
+            let Step::Call { args, .. } = &resolved.job.iterations[0].steps[0] else { panic!() };
+            assert!(matches!(&args[1], job::Arg::Value { secret: Some(label), .. } if label == "x"));
+        }
+
+        let error = format!("{:#}", try_resolve(module, &format!("v(hex({vector}, secret=0..16))"), 1).unwrap_err());
+        assert!(error.contains("no buffer options"), "{error}");
+    }
+
+    #[test]
+    fn values_are_reproducible_and_vary_by_iteration() {
+        let module = with_f(r#"(memory (export "m") 1)"#);
+        let script = "a = secret bytes(8)\nb = bytes(8)\nf(a)";
+        let job = |seed_iterations| try_resolve(&module, script, seed_iterations).unwrap().job;
+        let first = job(4);
+        assert_eq!(format!("{first:?}"), format!("{:?}", job(4)));
+
+        let labels: Vec<_> = first.iterations.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["random-0", "zeros", "ones", "random-3"]);
+
+        let data = |iteration: usize, step: usize| {
+            let Step::Buffer(buffer) = &first.iterations[iteration].steps[step] else { panic!() };
+            buffer.data.clone()
+        };
+        assert_eq!(data(1, 0), [0u8; 8]);
+        assert_eq!(data(2, 0), [0xffu8; 8]);
+        assert_ne!(data(0, 0), data(3, 0));
+        assert_eq!(data(0, 1), data(3, 1));
+    }
+
+    #[test]
+    fn separately_declared_secrets_get_their_own_labels() {
+        let module = r#"(module (memory (export "m") 1) (func (export "f") (param i32)))"#;
+        let resolved = try_resolve(module, "f(secret 0)\nf(secret 0)\nx = secret bytes(4)\nf(x)\nf(x)\nx = secret bytes(4)\nf(x)", 1).unwrap();
+        let labels: Vec<&str> = resolved.secrets.iter().map(String::as_str).collect();
+        assert_eq!(labels, ["f:arg0", "f:arg0#2", "x", "x#2"]);
     }
 }
