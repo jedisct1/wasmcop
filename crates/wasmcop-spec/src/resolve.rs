@@ -207,6 +207,11 @@ impl Walker<'_> {
                 let data = self.fill(*len, *fill, range);
                 self.buffer(data, range, options, label)
             }
+            Value::Hex { bytes, options } => {
+                let len = u32::try_from(bytes.len()).context("buffer too large")?;
+                let range = secret_range(len, arg.secret, options, label)?;
+                self.buffer(bytes.clone(), range, options, label)
+            }
         }
     }
 
@@ -305,6 +310,15 @@ impl Walker<'_> {
             let label = argument_label(arg, &call.function, index);
             let binding = match (declared[index].take(), &arg.value) {
                 (Some(binding), _) => binding,
+                (None, Value::Hex { bytes, options }) => {
+                    if *options != BufferOptions::default() {
+                        bail!("a v128 value takes no buffer options. For a secret vector use `secret hex(...)`");
+                    }
+                    let Ok(bytes) = <[u8; 16]>::try_from(bytes.as_slice()) else {
+                        bail!("a v128 value is exactly 16 bytes");
+                    };
+                    self.scalar(Literal::Bits(u128::from_le_bytes(bytes)), arg.secret, &label)
+                }
                 (None, _) => self.declare(arg, &label)?,
             };
             if let Some(name) = &arg.name {
@@ -349,9 +363,10 @@ fn secret_range(len: u32, secret: bool, options: &BufferOptions, label: &str) ->
     Ok(range)
 }
 
-fn is_buffer(arg: &Arg, _ty: ValType) -> bool {
+fn is_buffer(arg: &Arg, ty: ValType) -> bool {
     match arg.value {
         Value::Bytes { .. } => true,
+        Value::Hex { .. } => ty != ValType::V128,
         _ => false,
     }
 }

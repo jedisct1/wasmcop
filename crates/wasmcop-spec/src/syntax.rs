@@ -24,6 +24,7 @@ pub enum Value {
     Float(f64),
     Rand,
     Bytes { len: u32, fill: Fill, options: BufferOptions },
+    Hex { bytes: Vec<u8>, options: BufferOptions },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +264,7 @@ impl<'a> Parser<'a> {
             return match identifier.as_str() {
                 "rand" => Ok(Value::Rand),
                 "bytes" => self.bytes(),
+                "hex" => self.hex(),
                 _ => self.error(&format!("unknown value `{identifier}`")),
             };
         }
@@ -313,6 +315,28 @@ impl<'a> Parser<'a> {
         }
         self.close()?;
         Ok(Value::Bytes { len, fill, options })
+    }
+
+    fn hex(&mut self) -> Result<Value> {
+        let bytes = self.hex_body_open()?;
+        let mut options = BufferOptions::default();
+        while self.eat(',') {
+            self.option(&mut options)?;
+        }
+        self.close()?;
+        Ok(Value::Hex { bytes, options })
+    }
+
+    fn hex_body_open(&mut self) -> Result<Vec<u8>> {
+        self.open()?;
+        self.skip_space();
+        let rest = self.rest();
+        let end = rest.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(rest.len());
+        let Some(bytes) = wasmcop_job::from_hex(&rest[..end]) else {
+            return self.error("hex needs an even number of digits");
+        };
+        self.pos += end;
+        Ok(bytes)
     }
 
     fn option(&mut self, options: &mut BufferOptions) -> Result<()> {
@@ -372,6 +396,7 @@ mod tests {
         assert_eq!(arg_of("bytes(16, zero)").value, Value::Bytes { len: 16, fill: Fill::Zero, options: plain.clone() });
         assert_eq!(arg_of("bytes(16, ones)").value, Value::Bytes { len: 16, fill: Fill::Ones, options: plain.clone() });
         assert_eq!(arg_of("bytes(16, 0xa5)").value, Value::Bytes { len: 16, fill: Fill::Byte(0xa5), options: plain.clone() });
+        assert_eq!(arg_of("hex(00ffA5)").value, Value::Hex { bytes: vec![0, 255, 165], options: plain.clone() });
     }
 
     #[test]
@@ -379,6 +404,7 @@ mod tests {
         let error = parse_call("f(bytes(16, secret=4))").unwrap_err().to_string();
         assert!(error.contains("expected `..`"), "{error}");
         assert!(error.contains('^'), "{error}");
+        assert!(parse_call("f(hex(abc))").unwrap_err().to_string().contains("even number"));
         assert!(parse_call("f(1) g").is_err());
         assert!(parse_call("f(bytes(1, 256))").is_err());
         assert!(parse_call("f(bytes(99999999999))").is_err());
