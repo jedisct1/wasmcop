@@ -1,7 +1,7 @@
 //! Turns parsed tests into concrete steps for the runner, checking them against the module.
 
 use crate::module::{ModuleShape, Signature, Type};
-use crate::syntax::{Arg, Bound, BufferOptions, Call, Fill, Statement, Value};
+use crate::syntax::{Arg, Bound, BufferOptions, Call, Fill, Statement, Target, Value};
 use anyhow::{Context, Result, anyhow, bail};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{Rng, SeedableRng};
@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use turboshake::TurboShake128;
 use turboshake::digest::{ExtendableOutput, Update};
-use wasmcop_job::{self as job, Alloc, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType};
+use wasmcop_job::{self as job, Alloc, Buffer, Iteration, Job, MemoryBinding, Poison, Region, Scalar, SecretRange, Step, ValType};
 
 const DEFAULT_ALIGN: u32 = 16;
 
@@ -181,6 +181,24 @@ impl Walker<'_> {
                 Ok(())
             }
             Statement::Call(call) => self.call(call, &[]),
+            Statement::Declassify(target) => {
+                let region = self.region(target)?;
+                self.steps.push(Step::Declassify { region });
+                Ok(())
+            }
+        }
+    }
+
+    fn region(&self, target: &Target) -> Result<Region> {
+        match target {
+            Target::Range { address, length } => {
+                self.require_memory("a memory range")?;
+                Ok(Region::Absolute { address: *address, length: *length })
+            }
+            Target::Name(name) => match self.lookup(name)? {
+                Binding::Buffer { slot, .. } | Binding::Result { slot, .. } => Ok(Region::Slot(slot)),
+                Binding::Scalar { .. } => bail!("{name} is a constant, so there is nothing to mark"),
+            },
         }
     }
 

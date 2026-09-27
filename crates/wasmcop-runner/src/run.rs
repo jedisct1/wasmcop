@@ -1,7 +1,7 @@
 use crate::vg;
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
-use wasmcop_job::{Alloc, Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Report, Scalar, Step, ValType};
+use wasmcop_job::{Alloc, Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Region, Report, Scalar, Step, ValType};
 use wasmer::sys::EngineBuilder;
 use wasmer::{Engine, Instance, Memory, Module, RuntimeError, Store, Value, WASM_PAGE_SIZE};
 use wasmer_types::TrapCode;
@@ -12,7 +12,7 @@ const BUFFER_GAP: u32 = 64;
 
 #[derive(Clone)]
 enum Slot {
-    Buffer { address: u32 },
+    Buffer { address: u32, length: u32 },
     Value(Value),
 }
 
@@ -161,8 +161,21 @@ impl IterationState<'_> {
             Step::Call { function, args, results } => {
                 return self.call(store, function, args, results, report);
             }
+            Step::Declassify { region } => self.declassify(store, region)?,
         }
         Ok(None)
+    }
+
+    fn declassify(&mut self, store: &Store, region: &Region) -> Result<()> {
+        if let Region::Slot(slot) = region
+            && let Some(Slot::Value(value)) = self.slots.get_mut(slot)
+        {
+            *value = declassified(value);
+            return Ok(());
+        }
+        let (pointer, length) = self.region_ptr(store, region)?;
+        vg::make_defined(pointer, length);
+        Ok(())
     }
 
     fn buffer(&mut self, store: &mut Store, buffer: &Buffer) -> Result<()> {
@@ -202,7 +215,7 @@ impl IterationState<'_> {
             }
         }
         let address = u32::try_from(address).context("buffer address does not fit in an i32")?;
-        self.slots.insert(buffer.slot, Slot::Buffer { address });
+        self.slots.insert(buffer.slot, Slot::Buffer { address, length });
         Ok(())
     }
 
@@ -252,6 +265,22 @@ impl IterationState<'_> {
             Err(trap) => Ok(Some(failure_outcome(name, trap))),
         }
     }
+
+    fn region_ptr(&self, store: &Store, region: &Region) -> Result<(*const u8, usize)> {
+        let (address, length) = match region {
+            Region::Slot(slot) => match self.slots.get(slot) {
+                Some(Slot::Buffer { address, length, .. }) => (*address, *length),
+                _ => bail!("slot {slot} is not a buffer"),
+            },
+            Region::Absolute { address, length } => (*address, *length),
+        };
+        let view = self.memory()?.view(store);
+        if u64::from(address) + u64::from(length) > view.data_size() {
+            bail!("region {address:#x}+{length} is outside linear memory");
+        }
+        let pointer = unsafe { view.data_ptr().add(address as usize) as *const u8 };
+        Ok((pointer, length as usize))
+    }
 }
 
 fn failure_outcome(function: &str, trap: RuntimeError) -> Outcome {
@@ -270,5 +299,16 @@ pub fn to_value(scalar: Scalar, tainted: bool) -> Value {
         ValType::F32 => Value::F32(mark(f32::from_bits(scalar.bits as u32), tainted)),
         ValType::F64 => Value::F64(mark(f64::from_bits(scalar.bits as u64), tainted)),
         ValType::V128 => Value::V128(mark(scalar.bits, tainted)),
+    }
+}
+
+fn declassified(value: &Value) -> Value {
+    match value {
+        Value::I32(v) => Value::I32(vg::defined_value(*v)),
+        Value::I64(v) => Value::I64(vg::defined_value(*v)),
+        Value::F32(v) => Value::F32(vg::defined_value(*v)),
+        Value::F64(v) => Value::F64(vg::defined_value(*v)),
+        Value::V128(v) => Value::V128(vg::defined_value(*v)),
+        other => other.clone(),
     }
 }

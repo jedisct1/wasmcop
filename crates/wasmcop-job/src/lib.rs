@@ -93,6 +93,9 @@ pub enum Step {
         /// `None` means the result isn't kept.
         results: Vec<Option<usize>>,
     },
+    Declassify {
+        region: Region,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +114,12 @@ pub struct SecretRange {
     pub start: u32,
     pub end: u32,
     pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Region {
+    Slot(usize),
+    Absolute { address: u32, length: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

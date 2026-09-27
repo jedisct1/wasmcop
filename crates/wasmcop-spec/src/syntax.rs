@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 pub enum Statement {
     Bind { names: Vec<String>, value: Bound },
     Call(Call),
+    Declassify(Target),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +53,12 @@ pub struct BufferOptions {
     pub align: Option<u32>,
     pub at: Option<u32>,
     pub secret: Option<(u32, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    Name(String),
+    Range { address: u32, length: u32 },
 }
 
 pub fn parse_call(input: &str) -> Result<Call> {
@@ -268,7 +275,7 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) -> Result<Statement> {
         let name = self.require_identifier("a statement")?;
         if self.peek_is('(') {
-            return Ok(Statement::Call(self.call_args(name)?));
+            return self.builtin_or_call(name);
         }
         let mut names = vec![name];
         while self.eat(',') {
@@ -282,6 +289,27 @@ impl<'a> Parser<'a> {
     fn peek_is(&mut self, expected: char) -> bool {
         self.skip_space();
         self.peek() == Some(expected)
+    }
+
+    fn builtin_or_call(&mut self, name: String) -> Result<Statement> {
+        match name.as_str() {
+            "declassify" => Ok(Statement::Declassify(self.target()?)),
+            _ => Ok(Statement::Call(self.call_args(name)?)),
+        }
+    }
+
+    fn target(&mut self) -> Result<Target> {
+        self.open()?;
+        let target = if let Some(name) = self.identifier() {
+            Target::Name(name)
+        } else {
+            let address = self.u32_value("an address or a name")?;
+            self.expect(',')?;
+            let length = self.u32_value("a length")?;
+            Target::Range { address, length }
+        };
+        self.close()?;
+        Ok(target)
     }
 
     fn call_at_start(&mut self) -> Result<Call> {
