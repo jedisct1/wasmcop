@@ -65,7 +65,7 @@ pub fn parse_call(input: &str) -> Result<Call> {
 }
 
 /// One statement per line.
-/// `;` also separates statements.
+/// `;` also separates statements and `#` starts a comment.
 pub fn parse_script(input: &str) -> Result<Vec<Statement>> {
     let mut parser = Parser::new(input);
     let mut statements = Vec::new();
@@ -118,23 +118,30 @@ impl<'a> Parser<'a> {
     }
 
     fn at_statement_end(&self) -> bool {
-        matches!(self.peek(), Some('\n' | ';'))
+        matches!(self.peek(), Some('\n' | ';' | '#'))
     }
 
     fn skip_space(&mut self) {
         while let Some(c) = self.peek() {
             if c == ' ' || c == '\t' || c == '\r' || (c == '\n' && self.depth > 0) {
                 self.pos += c.len_utf8();
+            } else if c == '#' && self.depth > 0 {
+                self.skip_comment();
             } else {
                 break;
             }
         }
     }
 
+    fn skip_comment(&mut self) {
+        self.pos += self.rest().find('\n').unwrap_or(self.rest().len());
+    }
+
     fn skip_blank_lines(&mut self) {
         while let Some(c) = self.peek() {
             match c {
                 ' ' | '\t' | '\r' | '\n' | ';' => self.pos += 1,
+                '#' => self.skip_comment(),
                 _ => break,
             }
         }
