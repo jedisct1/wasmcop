@@ -93,6 +93,10 @@ pub enum Step {
         /// `None` means the result isn't kept.
         results: Vec<Option<usize>>,
     },
+    Poison {
+        region: Region,
+        label: String,
+    },
     Declassify {
         region: Region,
     },

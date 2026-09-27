@@ -161,6 +161,12 @@ impl IterationState<'_> {
             Step::Call { function, args, results } => {
                 return self.call(store, function, args, results, report);
             }
+            Step::Poison { region, label } => {
+                if self.job.poison.covers(label) {
+                    let (pointer, length) = self.region_ptr(store, region)?;
+                    vg::make_undefined(pointer, length);
+                }
+            }
             Step::Declassify { region } => self.declassify(store, region)?,
         }
         Ok(None)

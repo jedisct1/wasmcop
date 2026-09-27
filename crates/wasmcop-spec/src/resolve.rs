@@ -52,6 +52,7 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
             next_slot: 0,
             next_item: 0,
             label_uses: HashMap::new(),
+            poisoned: HashMap::new(),
             secrets: &mut secrets,
         };
         for statement in &test.statements {
@@ -165,6 +166,8 @@ struct Walker<'a> {
     next_slot: usize,
     next_item: u32,
     label_uses: HashMap<String, u32>,
+    /// The label of whatever `poison` has marked, by buffer or by address range.
+    poisoned: HashMap<Region, String>,
     secrets: &'a mut BTreeSet<String>,
 }
 
@@ -184,6 +187,28 @@ impl Walker<'_> {
             Statement::Declassify(target) => {
                 let region = self.region(target)?;
                 self.steps.push(Step::Declassify { region });
+                Ok(())
+            }
+            Statement::Poison(target) => {
+                let base = match target {
+                    Target::Name(name) => name.clone(),
+                    Target::Range { address, length } => format!("{address:#x}+{length}"),
+                };
+                if let Target::Name(name) = target
+                    && matches!(self.lookup(name)?, Binding::Result { .. })
+                {
+                    bail!("poison works on buffers, and {base} is a value");
+                }
+                let region = self.region(target)?;
+                let label = match self.poisoned.get(&region) {
+                    Some(label) => label.clone(),
+                    None => {
+                        let label = self.fresh_label(&base);
+                        self.poisoned.insert(region.clone(), label.clone());
+                        label
+                    }
+                };
+                self.steps.push(Step::Poison { region, label });
                 Ok(())
             }
         }
@@ -321,6 +346,7 @@ impl Walker<'_> {
         let slot = self.slot();
         if let Some((start, end)) = secret {
             let label = self.fresh_label(label);
+            self.poisoned.insert(Region::Slot(slot), label.clone());
             ranges.push(SecretRange { start, end, label });
         }
         let align = options.align.unwrap_or(DEFAULT_ALIGN);
@@ -626,5 +652,11 @@ mod tests {
         let resolved = try_resolve(module, "f(secret 0)\nf(secret 0)\nx = secret bytes(4)\nf(x)\nf(x)\nx = secret bytes(4)\nf(x)", 1).unwrap();
         let labels: Vec<&str> = resolved.secrets.iter().map(String::as_str).collect();
         assert_eq!(labels, ["f:arg0", "f:arg0#2", "x", "x#2"]);
+
+        let labels = |script: &str, module: &str| -> Vec<String> { try_resolve(module, script, 1).unwrap().secrets.into_iter().collect() };
+        assert_eq!(labels("x = out(4)\npoison(x)\nx = out(4)\npoison(x)", module), ["x", "x#2"]);
+        assert_eq!(labels("x = out(4)\npoison(x)\npoison(x)", module), ["x"]);
+        assert_eq!(labels("x = secret bytes(4)\npoison(x)", module), ["x"]);
+        assert_eq!(labels("poison(0x10, 4)\npoison(0x10, 4)\npoison(0x20, 4)", module), ["0x10+4", "0x20+4"]);
     }
 }

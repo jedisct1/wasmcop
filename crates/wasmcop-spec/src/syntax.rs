@@ -7,6 +7,7 @@ pub enum Statement {
     Bind { names: Vec<String>, value: Bound },
     Call(Call),
     Declassify(Target),
+    Poison(Target),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -294,6 +295,7 @@ impl<'a> Parser<'a> {
     fn builtin_or_call(&mut self, name: String) -> Result<Statement> {
         match name.as_str() {
             "declassify" => Ok(Statement::Declassify(self.target()?)),
+            "poison" => Ok(Statement::Poison(self.target()?)),
             _ => Ok(Statement::Call(self.call_args(name)?)),
         }
     }
