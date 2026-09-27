@@ -51,3 +51,10 @@ pub fn defined_value<T: Copy>(value: T) -> T {
     make_defined(&value as *const T as *const u8, size_of::<T>());
     black_box(value)
 }
+
+/// A copy Valgrind won't complain about.
+pub fn defined_copy(pointer: *const u8, length: usize) -> Vec<u8> {
+    let copy = unsafe { std::slice::from_raw_parts(pointer, length) }.to_vec();
+    make_defined(copy.as_ptr(), copy.len());
+    copy
+}

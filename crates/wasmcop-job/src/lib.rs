@@ -100,6 +100,11 @@ pub enum Step {
     Declassify {
         region: Region,
     },
+    Expect {
+        region: Region,
+        #[serde(with = "hex_bytes")]
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +163,7 @@ pub struct IterationReport {
     /// How many Valgrind errors each call caused.
     pub errors_per_call: Vec<u64>,
     pub outcome: Outcome,
+    pub expect_failures: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,7 +1,9 @@
 use crate::vg;
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
-use wasmcop_job::{Alloc, Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Region, Report, Scalar, Step, ValType};
+use wasmcop_job::{
+    Alloc, Arg, Buffer, FunctionExtent, Iteration, IterationReport, Job, MemoryBinding, Outcome, Region, Report, Scalar, Step, ValType, to_hex,
+};
 use wasmer::sys::EngineBuilder;
 use wasmer::{Engine, Instance, Memory, Module, RuntimeError, Store, Value, WASM_PAGE_SIZE};
 use wasmer_types::TrapCode;
@@ -73,6 +75,7 @@ fn run_iteration(
         label: iteration.label.clone(),
         errors_per_call: Vec::new(),
         outcome: Outcome::Completed,
+        expect_failures: Vec::new(),
     };
     state.prepare_arena(store, iteration)?;
 
@@ -168,6 +171,13 @@ impl IterationState<'_> {
                 }
             }
             Step::Declassify { region } => self.declassify(store, region)?,
+            Step::Expect { region, bytes } => {
+                let (pointer, length) = self.region_ptr(store, region)?;
+                let actual = vg::defined_copy(pointer, length);
+                if actual != *bytes {
+                    report.expect_failures.push(format!("expected {}, got {}", to_hex(bytes), to_hex(&actual)));
+                }
+            }
         }
         Ok(None)
     }

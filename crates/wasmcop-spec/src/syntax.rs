@@ -8,6 +8,7 @@ pub enum Statement {
     Call(Call),
     Declassify(Target),
     Poison(Target),
+    Expect { target: String, bytes: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -296,6 +297,18 @@ impl<'a> Parser<'a> {
         match name.as_str() {
             "declassify" => Ok(Statement::Declassify(self.target()?)),
             "poison" => Ok(Statement::Poison(self.target()?)),
+            "expect" => {
+                self.open()?;
+                let target = self.require_identifier("the name of a buffer")?;
+                self.expect(',')?;
+                let keyword = self.require_identifier("hex(...)")?;
+                if keyword != "hex" {
+                    return self.error("expect compares against hex(...)");
+                }
+                let bytes = self.hex_body()?;
+                self.close()?;
+                Ok(Statement::Expect { target, bytes })
+            }
             _ => Ok(Statement::Call(self.call_args(name)?)),
         }
     }
@@ -444,6 +457,12 @@ impl<'a> Parser<'a> {
         Ok(Value::Hex { bytes, options })
     }
 
+    fn hex_body(&mut self) -> Result<Vec<u8>> {
+        let bytes = self.hex_body_open()?;
+        self.close()?;
+        Ok(bytes)
+    }
+
     fn hex_body_open(&mut self) -> Result<Vec<u8>> {
         self.open()?;
         self.skip_space();
@@ -548,6 +567,25 @@ mod tests {
 
     #[test]
     fn script_with_every_statement_kind() {
+        let script = "
+            # state lives across calls
+            st  = out(256)
+            key = secret bytes(32); msg = bytes(1024)
+            hmac_init(st, key, len(key))
+            a, b = split(msg,
+                         len(msg))    # newlines are fine inside parentheses
+            declassify(st)
+            declassify(0x1000, 16)
+            poison(key)
+            expect(st, hex(00ff))
+        ";
+        let statements = parse_script(script).unwrap();
+        assert_eq!(statements.len(), 9);
+        assert!(matches!(&statements[4], Statement::Bind { names, value: Bound::Call(_) } if names.len() == 2));
+        assert_eq!(statements[5], Statement::Declassify(Target::Name("st".to_string())));
+        assert_eq!(statements[6], Statement::Declassify(Target::Range { address: 0x1000, length: 16 }));
+        assert_eq!(statements[8], Statement::Expect { target: "st".to_string(), bytes: vec![0, 255] });
+
         let statements = parse_script("x = bytes(4)\ny = f(x)").unwrap();
         assert!(matches!(&statements[0], Statement::Bind { value: Bound::Arg(_), .. }));
         assert!(matches!(&statements[1], Statement::Bind { value: Bound::Call(_), .. }));

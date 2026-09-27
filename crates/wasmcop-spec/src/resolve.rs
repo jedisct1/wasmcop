@@ -211,6 +211,17 @@ impl Walker<'_> {
                 self.steps.push(Step::Poison { region, label });
                 Ok(())
             }
+            Statement::Expect { target, bytes } => {
+                let binding = self.lookup(target)?;
+                let Binding::Buffer { slot, len } = binding else {
+                    bail!("expect works on buffers, and {target} isn't one");
+                };
+                if bytes.len() != len as usize {
+                    bail!("{target} is {len} bytes long, but the expected value is {} bytes", bytes.len());
+                }
+                self.steps.push(Step::Expect { region: Region::Slot(slot), bytes: bytes.clone() });
+                Ok(())
+            }
         }
     }
 
@@ -583,6 +594,7 @@ mod tests {
             ("x = out(4)\nf(secret x)", "already defined"),
             ("f(bytes(4, secret=2..9))", "doesn't fit"),
             ("f(secret bytes(4, secret=0..1))", "marked secret twice"),
+            ("x = out(4)\nexpect(x, hex(00))", "is 4 bytes long"),
         ] {
             let error = format!("{:#}", try_resolve(module, script, 1).unwrap_err());
             assert!(error.contains(reason), "{script}: {error}");
