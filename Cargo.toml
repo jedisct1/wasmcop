@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/wasmcop-job", "crates/wasmcop-spec", "crates/wasmcop-runner"]
+members = ["crates/wasmcop-job", "crates/wasmcop-spec", "crates/wasmcop-runner", "crates/wasmcop"]
 resolver = "2"
 
 [workspace.package]
