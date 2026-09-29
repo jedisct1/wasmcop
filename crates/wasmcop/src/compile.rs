@@ -10,6 +10,7 @@ use wasmer::{Engine, Module, Store};
 pub enum Backend {
     Singlepass,
     Cranelift,
+    Llvm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -17,8 +18,11 @@ pub enum Opt {
     /// Singlepass has no levels.
     Fixed,
     None,
+    Less,
+    Default,
     Speed,
     SpeedAndSize,
+    Aggressive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ValueEnum)]
@@ -67,6 +71,7 @@ impl Backend {
         match self {
             Backend::Singlepass => Opt::Fixed,
             Backend::Cranelift => Opt::Speed,
+            Backend::Llvm => Opt::Aggressive,
         }
     }
 
@@ -74,6 +79,7 @@ impl Backend {
         match self {
             Backend::Singlepass => &[Opt::Fixed],
             Backend::Cranelift => &[Opt::None, Opt::Speed, Opt::SpeedAndSize],
+            Backend::Llvm => &[Opt::None, Opt::Less, Opt::Default, Opt::Aggressive],
         }
     }
 
@@ -81,6 +87,7 @@ impl Backend {
     pub fn available(self) -> bool {
         match self {
             Backend::Singlepass | Backend::Cranelift => true,
+            Backend::Llvm => cfg!(feature = "llvm"),
         }
     }
 }
@@ -90,6 +97,7 @@ impl fmt::Display for Backend {
         f.write_str(match self {
             Backend::Singlepass => "singlepass",
             Backend::Cranelift => "cranelift",
+            Backend::Llvm => "llvm",
         })
     }
 }
@@ -99,8 +107,11 @@ impl fmt::Display for Opt {
         f.write_str(match self {
             Opt::Fixed => "-",
             Opt::None => "none",
+            Opt::Less => "less",
+            Opt::Default => "default",
             Opt::Speed => "speed",
             Opt::SpeedAndSize => "speed_and_size",
+            Opt::Aggressive => "aggressive",
         })
     }
 }
@@ -122,7 +133,7 @@ impl fmt::Display for Cell {
 }
 
 impl Backend {
-    pub const ALL: [Backend; 2] = [Backend::Singlepass, Backend::Cranelift];
+    pub const ALL: [Backend; 3] = [Backend::Singlepass, Backend::Cranelift, Backend::Llvm];
 }
 
 impl CpuProfile {
@@ -157,6 +168,20 @@ fn engine(cell: &Cell) -> Result<Engine, String> {
             });
             EngineBuilder::new(config)
         }
+        #[cfg(feature = "llvm")]
+        Backend::Llvm => {
+            use wasmer::sys::{LLVM, LLVMOptLevel};
+            let mut config = LLVM::default();
+            config.opt_level(match cell.opt {
+                Opt::None => LLVMOptLevel::None,
+                Opt::Less => LLVMOptLevel::Less,
+                Opt::Default => LLVMOptLevel::Default,
+                _ => LLVMOptLevel::Aggressive,
+            });
+            EngineBuilder::new(config)
+        }
+        #[cfg(not(feature = "llvm"))]
+        Backend::Llvm => return Err("this build of wasmcop has no LLVM backend".to_string()),
     };
     Ok(builder.set_target(Some(cell.cpu.target())).into())
 }
