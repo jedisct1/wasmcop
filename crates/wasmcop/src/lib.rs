@@ -1,5 +1,6 @@
 pub mod compile;
 pub mod valgrind;
+pub mod xml;
 
 use anyhow::{Context, Result};
 use std::path::Path;
