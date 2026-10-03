@@ -8,7 +8,9 @@ edition = "2024"
 
 [workspace.dependencies]
 wasmcop-job = { path = "crates/wasmcop-job" }
+wasmcop-spec = { path = "crates/wasmcop-spec" }
 wasmer = { version = "=7.5.0", default-features = false }
+wasmer-compiler = { version = "=7.5.0", default-features = false }
 wasmer-types = { version = "=7.5.0", default-features = false }
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -1,4 +1,5 @@
 pub mod classify;
+pub mod code;
 pub mod compile;
 pub mod valgrind;
 pub mod xml;
