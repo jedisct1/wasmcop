@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct ValgrindOutput {
@@ -11,6 +12,9 @@ pub struct ValgrindOutput {
 pub struct ValgrindError {
     pub kind: String,
     pub what: String,
+    /// How many times this error happened.
+    /// Valgrind folds duplicates together.
+    pub count: u64,
     pub frames: Vec<Frame>,
 }
 
@@ -69,9 +73,18 @@ pub fn parse(text: &str) -> Result<ValgrindOutput> {
     let root = parse_tree(text)?;
     let output = root.child("valgrindoutput").context("this is not Valgrind XML")?;
 
+    let mut counts = HashMap::new();
+    if let Some(error_counts) = output.child("errorcounts") {
+        for pair in error_counts.children_named("pair") {
+            if let (Some(unique), Some(count)) = (pair.text_of("unique"), pair.text_of("count")) {
+                counts.insert(unique.to_string(), count.parse::<u64>().context("bad error count")?);
+            }
+        }
+    }
 
     let mut errors = Vec::new();
     for element in output.children_named("error") {
+        let unique = element.text_of("unique").context("error without an id")?;
         let mut frames = Vec::new();
         for frame in element.child("stack").context("error without a stack")?.children_named("frame") {
             let ip = frame.text_of("ip").context("frame without an address")?;
@@ -84,6 +97,7 @@ pub fn parse(text: &str) -> Result<ValgrindOutput> {
         errors.push(ValgrindError {
             kind: element.text_of("kind").context("error without a kind")?.to_string(),
             what: element.text_of("what").unwrap_or_default().to_string(),
+            count: counts.get(unique).copied().unwrap_or(1),
             frames,
         });
     }
@@ -94,6 +108,29 @@ pub fn parse(text: &str) -> Result<ValgrindOutput> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn errors_counts_and_escapes() {
+        let xml = r#"<?xml version="1.0"?>
+<valgrindoutput>
+  <protocolversion>6</protocolversion>
+  <error>
+    <unique>0x1</unique>
+    <kind>UninitCondition</kind>
+    <what>Conditional jump</what>
+    <stack>
+      <frame><ip>0x4A95012</ip></frame>
+      <frame><ip>0x10</ip><fn>foo::bar</fn></frame>
+    </stack>
+  </error>
+  <errorcounts><pair><count>5</count><unique>0x1</unique></pair></errorcounts>
+</valgrindoutput>"#;
+        let output = parse(xml).unwrap();
+        let error = &output.errors[0];
+        assert_eq!(error.kind, "UninitCondition");
+        assert_eq!(error.count, 5);
+        assert_eq!(error.frames[0], Frame { ip: 0x4A95012, function: None });
+        assert_eq!(error.frames[1].function.as_deref(), Some("foo::bar"));
+    }
 
     #[test]
     fn truncated_xml_is_an_error() {
