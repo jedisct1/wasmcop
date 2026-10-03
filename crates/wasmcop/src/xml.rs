@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use quick_xml::Reader;
+use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::Event;
 use std::collections::HashMap;
 
@@ -61,6 +62,10 @@ fn parse_tree(text: &str) -> Result<Element> {
             Event::Text(text) => {
                 stack.last_mut().context("text outside an element")?.text.push_str(&text);
             }
+            Event::GeneralRef(reference) => {
+                let replacement = resolve_xml_entity(&reference).with_context(|| format!("unknown XML entity {}", &*reference))?;
+                stack.last_mut().context("text outside an element")?.text.push_str(replacement);
+            }
             Event::Eof => break,
             _ => {}
         }
@@ -119,7 +124,7 @@ mod tests {
     <what>Conditional jump</what>
     <stack>
       <frame><ip>0x4A95012</ip></frame>
-      <frame><ip>0x10</ip><fn>foo::bar</fn></frame>
+      <frame><ip>0x10</ip><fn>foo&lt;T&gt;::bar</fn></frame>
     </stack>
   </error>
   <errorcounts><pair><count>5</count><unique>0x1</unique></pair></errorcounts>
@@ -129,7 +134,7 @@ mod tests {
         assert_eq!(error.kind, "UninitCondition");
         assert_eq!(error.count, 5);
         assert_eq!(error.frames[0], Frame { ip: 0x4A95012, function: None });
-        assert_eq!(error.frames[1].function.as_deref(), Some("foo::bar"));
+        assert_eq!(error.frames[1].function.as_deref(), Some("foo<T>::bar"));
     }
 
     #[test]
