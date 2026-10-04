@@ -1,3 +1,4 @@
+pub mod analyze;
 pub mod classify;
 pub mod code;
 pub mod compile;
