@@ -1,6 +1,7 @@
 pub mod classify;
 pub mod code;
 pub mod compile;
+pub mod source;
 pub mod valgrind;
 pub mod xml;
 
