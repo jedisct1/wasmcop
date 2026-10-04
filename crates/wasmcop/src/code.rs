@@ -15,8 +15,12 @@ pub enum Owner {
     Function(u32),
 }
 
+/// Native offset, length, and offset in the wasm file.
+type WasmRange = (u32, u32, u32);
+
 struct ArtifactFunction {
     body: Vec<u8>,
+    wasm_map: Vec<WasmRange>,
 }
 
 /// The compiled code in an artifact, which stays the same across runs.
@@ -32,9 +36,15 @@ pub struct CodeFunction<'a> {
     pub address: u64,
     pub length: u64,
     pub body: &'a [u8],
+    pub wasm_map: &'a [WasmRange],
 }
 
 impl CodeFunction<'_> {
+    pub fn wasm_offset(&self, native_offset: u64) -> Option<u32> {
+        let offset = u32::try_from(native_offset).ok()?;
+        self.wasm_map.iter().find(|(start, len, _)| offset >= *start && offset - *start < *len).map(|(_, _, wasm)| *wasm)
+    }
+
     pub fn decode(&self, native_offset: u64) -> Option<Instruction> {
         let bytes = self.body.get(native_offset as usize..)?;
         let mut decoder = Decoder::with_ip(64, bytes, native_offset, DecoderOptions::NONE);
@@ -80,8 +90,16 @@ impl ArtifactCode {
         let functions = compilation
             .function_bodies
             .values()
-            .map(|body| ArtifactFunction {
+            .zip(compilation.function_frame_info.values())
+            .map(|(body, info)| ArtifactFunction {
                 body: body.body.clone(),
+                wasm_map: info
+                    .address_map
+                    .instructions
+                    .iter()
+                    .filter(|entry| !entry.srcloc.is_default())
+                    .map(|entry| (entry.code_offset as u32, entry.code_len as u32, entry.srcloc.bits()))
+                    .collect(),
             })
             .collect();
         Ok(ArtifactCode { functions })
@@ -99,6 +117,7 @@ impl ArtifactCode {
                 address: extent.address,
                 length: extent.length,
                 body: &function.body,
+                wasm_map: &function.wasm_map,
             });
         }
         Ok(CodeMap { functions })
