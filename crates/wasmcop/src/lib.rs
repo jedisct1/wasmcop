@@ -2,6 +2,7 @@ pub mod analyze;
 pub mod classify;
 pub mod code;
 pub mod compile;
+pub mod report;
 pub mod source;
 pub mod valgrind;
 pub mod xml;
