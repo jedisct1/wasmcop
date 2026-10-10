@@ -1,4 +1,5 @@
 pub mod analyze;
+pub mod check;
 pub mod classify;
 pub mod code;
 pub mod compile;
