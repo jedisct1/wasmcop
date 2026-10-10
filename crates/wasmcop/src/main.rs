@@ -1,10 +1,11 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wasmcop::check::{Settings, check};
 use wasmcop::compile::{Backend, Cell};
 use wasmcop::valgrind::{Valgrind, find_runner};
+use wasmcop_spec::module::{ImportItem, ModuleShape};
 use wasmcop_spec::resolve::{Options, TestCase};
 use wasmcop_spec::syntax::{Statement, parse_call};
 
@@ -31,6 +32,31 @@ struct CheckArgs {
 enum Command {
     /// Check functions for secret-dependent behavior
     Check(CheckArgs),
+    /// Show a module's functions and what it needs
+    List { module: PathBuf },
+}
+
+fn list(path: &Path) -> Result<()> {
+    let wasm = wasmcop::read_module(path)?;
+    let shape = ModuleShape::parse(&wasm).with_context(|| path.display().to_string())?;
+    println!("functions:");
+    for (name, signature) in &shape.functions {
+        println!("  {name}{signature}");
+    }
+    match shape.memory_binding() {
+        Ok(_) => println!("memory: can use buffers"),
+        Err(reason) => println!("memory: scalar arguments only, because {reason}"),
+    }
+    if !shape.imports.is_empty() {
+        println!("imports:");
+        for import in &shape.imports {
+            match &import.item {
+                ImportItem::Function(signature) => println!("  {}.{}{signature}", import.module, import.name),
+                _ => println!("  {}.{}", import.module, import.name),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn cells(args: &CheckArgs) -> Vec<Cell> {
@@ -71,6 +97,7 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Check(args) => run_check(&args),
+        Command::List { module } => list(&module).map(|()| ExitCode::SUCCESS),
     };
     result.unwrap_or_else(|e| {
         eprintln!("wasmcop: {e:#}");
