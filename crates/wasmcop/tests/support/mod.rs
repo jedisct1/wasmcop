@@ -6,6 +6,8 @@ use tempfile::TempDir;
 use wasmcop::compile::{self, Backend, Cell};
 use wasmcop::valgrind::{Run, Valgrind, find_runner};
 use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType};
+use wasmcop_spec::resolve::{Options, TestCase};
+use wasmcop_spec::syntax::parse_script;
 
 pub fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").join(name);
@@ -18,6 +20,14 @@ pub fn scratch() -> TempDir {
 
 pub fn default_cell(backend: Backend) -> Cell {
     Cell::defaults(&[backend])[0]
+}
+
+pub fn options() -> Options {
+    Options { iterations: 1, ..Options::default() }
+}
+
+pub fn test_case(script: &str) -> TestCase {
+    TestCase { name: "t".to_string(), statements: parse_script(script).unwrap() }
 }
 
 pub fn default_valgrind() -> Valgrind {
