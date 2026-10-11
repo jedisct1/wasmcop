@@ -127,6 +127,20 @@ pub fn analyze(output: &ValgrindOutput, code: &CodeMap, report: &Report, source:
     analysis
 }
 
+/// The two runs only differ in what's poisoned, so errors here can't come from a secret and mean the harness is noisy.
+pub fn baseline_failures(output: &ValgrindOutput, report: &Report) -> Vec<String> {
+    let mut failures = Vec::new();
+    run_failures(report, &mut failures);
+    let trapped = trapped_out_of_bounds(report);
+    for error in &output.errors {
+        if trapped && classify(&error.kind, &error.what, true, None) == Disposition::GuardPage {
+            continue;
+        }
+        failures.push(format!("the run with no secrets still reported: {}", describe_host(error)));
+    }
+    failures
+}
+
 #[cfg(test)]
 impl Finding {
     pub fn sample(class: Class) -> Finding {
@@ -223,5 +237,16 @@ mod tests {
         let errors = vec![secret_error("UninitCondition", &[(0x1000, None)], 1), secret_error("UninitCondition", &[(0x2000, None)], 1)];
         let analysis = run(errors, &report_with(Outcome::Completed, true));
         assert_eq!(analysis.findings.iter().map(|f| f.owner.clone()).collect::<Vec<_>>(), [Owner::Function(0), Owner::Function(1)]);
+    }
+
+    #[test]
+    fn baseline_only_tolerates_guard_pages_when_trapped() {
+        let guard = secret_error("InvalidRead", &[(0x1002, None)], 1);
+        let completed = report_with(Outcome::Completed, false);
+        let output = ValgrindOutput { errors: vec![guard] };
+        assert_eq!(baseline_failures(&output, &completed).len(), 1);
+        let trapped = report_with(out_of_bounds(), false);
+        assert_eq!(baseline_failures(&output, &trapped).len(), 1);
+        assert!(baseline_failures(&output, &trapped)[0].contains("trapped"));
     }
 }

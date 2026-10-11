@@ -82,7 +82,7 @@ fn analyze_run(run: &Run, compiled: &Compiled, module: &Module) -> Result<Analys
     Ok(analyze::analyze(&read_output(run)?, &code, &run.report, module.source))
 }
 
-/// Runs every test on every cell.
+/// Runs every test on every cell, and a second time with no secrets to prove the harness itself is quiet.
 pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell], settings: &Settings) -> Result<CheckReport> {
     let shape = ModuleShape::parse(wasm)?;
     let source = SourceInfo::new(wasm);
@@ -106,6 +106,7 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
             if let Ok(compiled) = build {
                 let dir = settings.work_dir.join(format!("test-{index}")).join(cell.slug());
                 work.push(Work::new(&test.job, Poison::All, compiled, dir.join("main")));
+                work.push(Work::new(&test.job, Poison::None, compiled, dir.join("baseline")));
             }
         }
     }
@@ -118,8 +119,9 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
             let (skipped, analysis) = match build {
                 Err(reason) => (Some(reason.clone()), Analysis::default()),
                 Ok(compiled) => {
-                    let main = runs.next().expect("one run per job");
-                    let analysis = analyze_run(&main, compiled, &module)?;
+                    let (main, baseline) = (runs.next().expect("one run per job"), runs.next().expect("one run per job"));
+                    let mut analysis = analyze_run(&main, compiled, &module)?;
+                    analysis.failures.extend(analyze::baseline_failures(&read_output(&baseline)?, &baseline.report));
                     (None, analysis)
                 }
             };
