@@ -47,6 +47,7 @@ pub struct Analysis {
     pub findings: Vec<Finding>,
     /// Reasons the results can't be trusted, or are incomplete.
     pub failures: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 fn trapped_out_of_bounds(report: &Report) -> bool {
@@ -125,6 +126,14 @@ pub fn analyze(output: &ValgrindOutput, code: &CodeMap, report: &Report, source:
     analysis.failures.sort();
     analysis.failures.dedup();
     analysis
+}
+
+/// Warns about a test that has secrets but never seems to have used them.
+pub fn warn_if_vacuous(analysis: &mut Analysis, report: &Report) {
+    let quiet = analysis.findings.is_empty() && analysis.failures.is_empty();
+    if quiet && !report.iterations.iter().any(|i| i.output_tainted) {
+        analysis.warnings.push("no secret reached any output. Check that the call really uses the secret".to_string());
+    }
 }
 
 /// The two runs only differ in what's poisoned, so errors here can't come from a secret and mean the harness is noisy.
@@ -238,6 +247,19 @@ mod tests {
         let errors = vec![secret_error("UninitCondition", &[(0x1000, None)], 1), secret_error("UninitCondition", &[(0x2000, None)], 1)];
         let analysis = run(errors, &report_with(Outcome::Completed, true));
         assert_eq!(analysis.findings.iter().map(|f| f.owner.clone()).collect::<Vec<_>>(), [Owner::Function(0), Owner::Function(1)]);
+    }
+
+    #[test]
+    fn vacuous_runs_warn() {
+        let warnings = |errors, tainted| {
+            let report = report_with(Outcome::Completed, tainted);
+            let mut analysis = run(errors, &report);
+            warn_if_vacuous(&mut analysis, &report);
+            analysis.warnings
+        };
+        assert!(warnings(Vec::new(), false)[0].contains("no secret"));
+        assert!(warnings(Vec::new(), true).is_empty());
+        assert!(warnings(vec![secret_error("UninitCondition", &[(0x1000, None)], 1)], false).is_empty());
     }
 
     #[test]

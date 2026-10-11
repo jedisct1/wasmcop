@@ -73,6 +73,9 @@ fn write_test(out: &mut String, test: &TestResult) {
         for failure in &cell.analysis.failures {
             let _ = writeln!(out, "  {}: FAILED: {failure}", cell.cell);
         }
+        for warning in &cell.analysis.warnings {
+            let _ = writeln!(out, "  {}: warning: {warning}", cell.cell);
+        }
     }
     write_findings(out, test);
     out.push('\n');

@@ -113,7 +113,7 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
     let mut runs = run_all(&work, settings)?.into_iter();
 
     let mut results = Vec::new();
-    for test in tests {
+    for (test, resolved) in tests.iter().zip(&resolved) {
         let mut cell_results = Vec::new();
         for (build, label) in builds.iter().zip(&labels) {
             let (skipped, analysis) = match build {
@@ -121,6 +121,9 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
                 Ok(compiled) => {
                     let (main, baseline) = (runs.next().expect("one run per job"), runs.next().expect("one run per job"));
                     let mut analysis = analyze_run(&main, compiled, &module)?;
+                    if !resolved.secrets.is_empty() {
+                        analyze::warn_if_vacuous(&mut analysis, &main.report);
+                    }
                     analysis.failures.extend(analyze::baseline_failures(&read_output(&baseline)?, &baseline.report));
                     (None, analysis)
                 }
