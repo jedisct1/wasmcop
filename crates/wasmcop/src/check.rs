@@ -9,6 +9,9 @@ use anyhow::{Context, Result};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::thread;
 use wasmcop_job::{Job, Poison};
 use wasmcop_spec::module::ModuleShape;
 use wasmcop_spec::resolve::{Options, Resolved, TestCase, resolve};
@@ -17,6 +20,7 @@ pub struct Settings {
     pub valgrind: Valgrind,
     pub runner: PathBuf,
     pub work_dir: PathBuf,
+    pub jobs: usize,
 }
 
 pub struct Compiled {
@@ -46,11 +50,29 @@ impl Work {
     }
 }
 
+/// Runs `work` on every item, several at a time, and returns the results in order.
+fn parallel_map<T: Sync, R: Send>(items: &[T], jobs: usize, work: impl Fn(&T) -> Result<R> + Sync) -> Result<Vec<R>> {
+    let next = AtomicUsize::new(0);
+    let results: Vec<Mutex<Option<Result<R>>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    thread::scope(|scope| {
+        for _ in 0..jobs.clamp(1, items.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else { break };
+                    *results[index].lock().unwrap() = Some(work(item));
+                }
+            });
+        }
+    });
+    results.into_iter().map(|result| result.into_inner().unwrap().expect("every item was processed")).collect()
+}
+
 fn run_all(work: &[Work], settings: &Settings) -> Result<Vec<Run>> {
-    work.iter().map(|item| {
+    parallel_map(work, settings.jobs, |item| {
         fs::create_dir_all(&item.dir).with_context(|| format!("creating {}", item.dir.display()))?;
         settings.valgrind.run(&settings.runner, item.job.clone(), &item.dir)
-    }).collect()
+    })
 }
 
 /// Each cell has its own work directory, so a repeated cell would overwrite itself.
@@ -97,9 +119,10 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
         .collect::<Result<Vec<Resolved>>>()?;
 
     let cells = unique(cells);
-    let builds = cells.iter().map(|cell| compile_cell(wasm, cell, &settings.work_dir)).collect::<Result<Vec<_>>>()?;
+    let builds = parallel_map(&cells, settings.jobs, |cell| compile_cell(wasm, cell, &settings.work_dir))?;
     let labels = cell_labels(&cells);
 
+    // One queue for everything, so the number of cells doesn't limit how many runs happen at once.
     let mut work = Vec::new();
     for (index, test) in resolved.iter().enumerate() {
         for (cell, build) in cells.iter().zip(&builds) {

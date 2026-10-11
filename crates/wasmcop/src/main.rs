@@ -26,6 +26,9 @@ struct CheckArgs {
     /// Only use these backends [default: all]
     #[arg(long, value_enum, value_delimiter = ',')]
     backend: Vec<Backend>,
+    /// How many runs to do at once [default: one per CPU core]
+    #[arg(long)]
+    jobs: Option<usize>,
 }
 
 #[derive(Subcommand)]
@@ -88,7 +91,8 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
     let options = Options::default();
     let temp = tempfile::tempdir()?;
     let work_dir = temp.path().to_path_buf();
-    let settings = Settings { valgrind: Valgrind::find(None)?, runner: find_runner()?, work_dir };
+    let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    let settings = Settings { valgrind: Valgrind::find(None)?, runner: find_runner()?, work_dir, jobs };
     let report = check(&wasm, &tests, &options, &cells(args), &settings)?;
     print!("{}", report.to_text());
     Ok(ExitCode::from(report.exit_code()))
