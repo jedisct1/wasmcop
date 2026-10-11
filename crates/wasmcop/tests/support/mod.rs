@@ -47,7 +47,7 @@ fn job(iterations: Vec<Iteration>) -> Job {
 
 pub fn secret_buffer(slot: usize, data: Vec<u8>) -> Step {
     let end = data.len() as u32;
-    Step::Buffer(Buffer { slot, data, align: 16, at: None, secret: vec![SecretRange { start: 0, end, label: "key".to_string() }] })
+    Step::Buffer(Buffer { slot, data, align: 16, at: None, secret: vec![SecretRange { start: 0, end, label: "key".to_string() }], public: false })
 }
 
 pub fn secret_i32(value: u32) -> Arg {

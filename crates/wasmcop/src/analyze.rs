@@ -175,13 +175,14 @@ mod tests {
         }
     }
 
-    fn report_with(outcome: Outcome, _tainted: bool) -> Report {
+    fn report_with(outcome: Outcome, tainted: bool) -> Report {
         Report {
             functions: vec![FunctionExtent { local_index: 0, address: 0x1000, length: 16 }],
             iterations: vec![IterationReport {
                 label: "l".to_string(),
                 errors_per_call: Vec::new(),
                 outcome,
+                output_tainted: tainted,
                 expect_failures: Vec::new(),
             }],
             error: None,

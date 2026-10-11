@@ -14,7 +14,7 @@ const BUFFER_GAP: u32 = 64;
 
 #[derive(Clone)]
 enum Slot {
-    Buffer { address: u32, length: u32 },
+    Buffer { address: u32, length: u32, public: bool },
     Value(Value),
 }
 
@@ -70,11 +70,13 @@ fn run_iteration(
         memory,
         slots: HashMap::new(),
         arena: None,
+        result_tainted: false,
     };
     let mut report = IterationReport {
         label: iteration.label.clone(),
         errors_per_call: Vec::new(),
         outcome: Outcome::Completed,
+        output_tainted: false,
         expect_failures: Vec::new(),
     };
     state.prepare_arena(store, iteration)?;
@@ -85,6 +87,7 @@ fn run_iteration(
             break;
         }
     }
+    report.output_tainted = state.output_tainted(store);
     Ok(report)
 }
 
@@ -94,6 +97,7 @@ struct IterationState<'a> {
     memory: Option<Memory>,
     slots: HashMap<usize, Slot>,
     arena: Option<Arena>,
+    result_tainted: bool,
 }
 
 struct Arena {
@@ -231,7 +235,7 @@ impl IterationState<'_> {
             }
         }
         let address = u32::try_from(address).context("buffer address does not fit in an i32")?;
-        self.slots.insert(buffer.slot, Slot::Buffer { address, length });
+        self.slots.insert(buffer.slot, Slot::Buffer { address, length, public: buffer.public });
         Ok(())
     }
 
@@ -271,6 +275,8 @@ impl IterationState<'_> {
         report.errors_per_call.push(vg::count_errors() - before);
         match returned {
             Ok(values) => {
+                // Unbound results count too, so check before dropping them.
+                self.result_tainted |= values.iter().any(value_tainted);
                 for (slot, value) in results.iter().zip(values.iter()) {
                     if let Some(slot) = slot {
                         self.slots.insert(*slot, Slot::Value(value.clone()));
@@ -296,6 +302,20 @@ impl IterationState<'_> {
         }
         let pointer = unsafe { view.data_ptr().add(address as usize) as *const u8 };
         Ok((pointer, length as usize))
+    }
+
+    fn output_tainted(&self, store: &Store) -> bool {
+        self.result_tainted
+            || self.slots.values().any(|slot| match slot {
+                Slot::Buffer { address, length, public: true } => {
+                    self.memory.as_ref().is_some_and(|memory| {
+                        let view = memory.view(store);
+                        let pointer = unsafe { view.data_ptr().add(*address as usize) as *const u8 };
+                        vg::is_undefined(pointer, *length as usize)
+                    })
+                }
+                _ => false,
+            })
     }
 }
 
@@ -326,5 +346,16 @@ fn declassified(value: &Value) -> Value {
         Value::F64(v) => Value::F64(vg::defined_value(*v)),
         Value::V128(v) => Value::V128(vg::defined_value(*v)),
         other => other.clone(),
+    }
+}
+
+fn value_tainted(value: &Value) -> bool {
+    match value {
+        Value::I32(v) => vg::value_is_undefined(*v),
+        Value::I64(v) => vg::value_is_undefined(*v),
+        Value::F32(v) => vg::value_is_undefined(*v),
+        Value::F64(v) => vg::value_is_undefined(*v),
+        Value::V128(v) => vg::value_is_undefined(*v),
+        _ => false,
     }
 }

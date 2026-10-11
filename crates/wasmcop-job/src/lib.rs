@@ -115,6 +115,8 @@ pub struct Buffer {
     pub align: u32,
     pub at: Option<u32>,
     pub secret: Vec<SecretRange>,
+    /// Checked for taint at the end, to catch tests that never touched the secret.
+    pub public: bool,
 }
 
 /// `end` is exclusive.
@@ -163,6 +165,7 @@ pub struct IterationReport {
     /// How many Valgrind errors each call caused.
     pub errors_per_call: Vec<u64>,
     pub outcome: Outcome,
+    pub output_tainted: bool,
     pub expect_failures: Vec<String>,
 }
 

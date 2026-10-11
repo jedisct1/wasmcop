@@ -364,7 +364,8 @@ impl Walker<'_> {
         if !align.is_power_of_two() {
             bail!("alignment {align} is not a power of two");
         }
-        self.steps.push(Step::Buffer(Buffer { slot, data, align, at: options.at, secret: ranges }));
+        let public = ranges.is_empty();
+        self.steps.push(Step::Buffer(Buffer { slot, data, align, at: options.at, secret: ranges, public }));
         Ok(Binding::Buffer { slot, len })
     }
 

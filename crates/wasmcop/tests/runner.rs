@@ -2,7 +2,7 @@ mod support;
 
 use support::*;
 use wasmcop::compile::{Backend, Cell};
-use wasmcop_job::{Alloc, Arg, Buffer, Outcome, SecretRange, Step};
+use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Outcome, SecretRange, Step};
 
 fn cranelift() -> Cell {
     default_cell(Backend::Cranelift)
@@ -38,7 +38,7 @@ fn traps_come_back_as_outcomes() {
 }
 
 fn buffer(len: usize, align: u32, at: Option<u32>, secret: Vec<SecretRange>) -> Step {
-    Step::Buffer(Buffer { slot: 0, data: vec![1; len], align, at, secret })
+    Step::Buffer(Buffer { slot: 0, data: vec![1; len], align, at, secret, public: true })
 }
 
 fn range(start: u32, end: u32) -> SecretRange {
@@ -88,4 +88,22 @@ fn arena_placement_stays_in_memory() {
     let steps = vec![buffer(16, 0x8000_0000, None, vec![]), call("check", vec![Arg::Address(0)])];
     let run = execute(&wasm, &cranelift(), vec![iteration(steps)], &dir);
     assert_eq!(run.report.iterations[0].outcome, Outcome::Completed);
+}
+
+#[test]
+fn returned_secrets_count_as_output() {
+    let one_call = |name: &str, arg: Arg, results: Vec<Option<usize>>| -> Iteration {
+        iteration(vec![secret_buffer(0, vec![0xa5; 32]), Step::Call { function: name.to_string(), args: vec![arg], results }])
+    };
+    let dir = scratch();
+    let iterations = vec![
+        one_call("arg_ct", secret_i32(5), vec![None]),
+        one_call("arg_ct", secret_i32(5), vec![Some(1)]),
+        one_call("mem_mul64", Arg::Address(0), vec![None]),
+        one_call("arg_ignored", secret_i32(5), vec![None]),
+    ];
+    let run = execute(&fixture("basic.wat"), &cranelift(), iterations, &dir);
+    let tainted: Vec<bool> = run.report.iterations.iter().map(|i| i.output_tainted).collect();
+    assert_eq!(tainted, [true, true, true, false]);
+    assert!(run.report.iterations.iter().all(|i| i.errors_per_call[0] == 0));
 }
