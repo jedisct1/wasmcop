@@ -26,6 +26,12 @@ struct CheckArgs {
     /// Only use these backends [default: all]
     #[arg(long, value_enum, value_delimiter = ',')]
     backend: Vec<Backend>,
+    /// How many times to run each test, with different secrets [default: 4]
+    #[arg(long)]
+    iterations: Option<u32>,
+    /// Seed for the test values [default: 1]
+    #[arg(long)]
+    seed: Option<u64>,
     /// How many runs to do at once [default: one per CPU core]
     #[arg(long)]
     jobs: Option<usize>,
@@ -88,7 +94,12 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
     }
     let wasm = wasmcop::read_module(&args.input)?;
     let tests = tests_from_calls(&args.calls)?;
-    let options = Options::default();
+    let mut options = Options::default();
+    options.seed = args.seed.unwrap_or(options.seed);
+    options.iterations = args.iterations.unwrap_or(options.iterations);
+    if options.iterations == 0 {
+        bail!("iterations must be at least 1");
+    }
     let temp = tempfile::tempdir()?;
     let work_dir = temp.path().to_path_buf();
     let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
