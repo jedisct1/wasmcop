@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wasmcop::check::{Settings, check};
@@ -14,6 +14,12 @@ use wasmcop_spec::syntax::{Statement, parse_call};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Format {
+    Text,
+    Json,
 }
 
 #[derive(clap::Args)]
@@ -32,6 +38,8 @@ struct CheckArgs {
     /// Seed for the test values [default: 1]
     #[arg(long)]
     seed: Option<u64>,
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
     /// How many runs to do at once [default: one per CPU core]
     #[arg(long)]
     jobs: Option<usize>,
@@ -108,7 +116,10 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
     let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
     let settings = Settings { valgrind: Valgrind::find(None)?, runner: find_runner()?, work_dir, jobs };
     let report = check(&wasm, &tests, &options, &cells(args), &settings)?;
-    print!("{}", report.to_text());
+    match args.format {
+        Format::Text => print!("{}", report.to_text()),
+        Format::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+    }
     Ok(ExitCode::from(report.exit_code()))
 }
 
