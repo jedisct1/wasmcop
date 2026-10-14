@@ -35,6 +35,9 @@ struct CheckArgs {
     /// How many runs to do at once [default: one per CPU core]
     #[arg(long)]
     jobs: Option<usize>,
+    /// Keep job files and Valgrind output here
+    #[arg(long)]
+    work_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -101,7 +104,7 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
         bail!("iterations must be at least 1");
     }
     let temp = tempfile::tempdir()?;
-    let work_dir = temp.path().to_path_buf();
+    let work_dir = args.work_dir.clone().unwrap_or_else(|| temp.path().to_path_buf());
     let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
     let settings = Settings { valgrind: Valgrind::find(None)?, runner: find_runner()?, work_dir, jobs };
     let report = check(&wasm, &tests, &options, &cells(args), &settings)?;
