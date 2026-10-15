@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wasmcop::check::{Settings, check};
-use wasmcop::compile::{Backend, Cell};
+use wasmcop::compile::{Backend, Cell, CpuProfile};
 use wasmcop::valgrind::{Valgrind, find_runner};
 use wasmcop_spec::module::{ImportItem, ModuleShape};
 use wasmcop_spec::resolve::{Options, TestCase};
@@ -32,6 +32,12 @@ struct CheckArgs {
     /// Only use these backends [default: all]
     #[arg(long, value_enum, value_delimiter = ',')]
     backend: Vec<Backend>,
+    /// Only use these CPU profiles [default: avx2, or all with --full]
+    #[arg(long, value_enum, value_delimiter = ',')]
+    cpu: Vec<CpuProfile>,
+    /// Try every optimization level and CPU profile
+    #[arg(long)]
+    full: bool,
     /// How many times to run each test, with different secrets [default: 4]
     #[arg(long)]
     iterations: Option<u32>,
@@ -85,7 +91,16 @@ fn cells(args: &CheckArgs) -> Vec<Cell> {
     } else {
         args.backend.clone()
     };
-    Cell::defaults(&backends)
+    let cpus: Vec<CpuProfile> = match (args.cpu.is_empty(), args.full) {
+        (false, _) => args.cpu.clone(),
+        (true, true) => CpuProfile::ALL.to_vec(),
+        (true, false) => vec![CpuProfile::Avx2],
+    };
+    if args.full {
+        Cell::full(&backends, &cpus)
+    } else {
+        cpus.into_iter().flat_map(|cpu| Cell::defaults_on(&backends, cpu)).collect()
+    }
 }
 
 fn tests_from_calls(calls: &[String]) -> Result<Vec<TestCase>> {
