@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
+use wasmcop::check::{Settings, check};
 use wasmcop::compile::{self, Backend, Cell};
+use wasmcop::report::CheckReport;
 use wasmcop::valgrind::{Run, Valgrind, find_runner};
 use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType};
 use wasmcop_spec::resolve::{Options, TestCase};
@@ -32,6 +34,15 @@ pub fn test_case(script: &str) -> TestCase {
 
 pub fn default_valgrind() -> Valgrind {
     Valgrind::find(None).unwrap()
+}
+
+pub fn settings(dir: &TempDir, valgrind: Valgrind, blame: bool) -> Settings {
+    Settings { valgrind, runner: find_runner().unwrap(), work_dir: dir.path().to_path_buf(), jobs: 4, blame }
+}
+
+pub fn check_with(wasm: &[u8], script: &str, cells: &[Cell], options: &Options, valgrind: Valgrind, blame: bool) -> CheckReport {
+    let dir = scratch();
+    check(wasm, &[test_case(script)], options, cells, &settings(&dir, valgrind, blame)).unwrap()
 }
 
 fn job(iterations: Vec<Iteration>) -> Job {
