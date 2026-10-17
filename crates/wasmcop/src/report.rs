@@ -3,7 +3,7 @@ use crate::classify::Class;
 use crate::code::Owner;
 use crate::compile::Cell;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,6 +25,10 @@ pub struct CheckReport {
     pub blamed: bool,
     pub tests: Vec<TestResult>,
 }
+
+/// Findings of one kind per function.
+/// A leaky table can have hundreds, and the first few say enough.
+const MAX_SITES_SHOWN: usize = 4;
 
 pub const EXIT_CLEAN: u8 = 0;
 pub const EXIT_FINDINGS: u8 = 1;
@@ -139,8 +143,22 @@ fn write_findings(out: &mut String, test: &TestResult, blamed: bool) {
         }
     }
 
+    let mut counts: BTreeMap<(Class, Owner), (String, usize)> = BTreeMap::new();
     for (key, findings) in groups {
-        write_group(out, test, &key, &findings, blamed);
+        let first = findings[0].1;
+        let count = counts.entry((key.class, key.owner.clone())).or_insert((first.function.clone(), 0));
+        count.1 += 1;
+        if count.1 <= MAX_SITES_SHOWN {
+            write_group(out, test, &key, &findings, blamed);
+        }
+    }
+
+    let ambiguous = ambiguous_names(test.cells.iter().flat_map(|c| &c.analysis.findings).map(|f| (f.function.as_str(), &f.owner)));
+    for ((class, owner), (function, count)) in &counts {
+        if *count > MAX_SITES_SHOWN {
+            let name = display_name(function, owner, &ambiguous);
+            let _ = writeln!(out, "  ... and {} more {} findings in {name}. Use --format json to see them all.", count - MAX_SITES_SHOWN, class.name());
+        }
     }
 }
 
@@ -186,6 +204,22 @@ fn write_group(out: &mut String, test: &TestResult, key: &GroupKey, findings: &[
     }
 }
 
+/// Names that more than one function shares.
+fn ambiguous_names<'a>(items: impl Iterator<Item = (&'a str, &'a Owner)>) -> BTreeSet<&'a str> {
+    let mut owners: BTreeMap<&str, BTreeSet<&Owner>> = BTreeMap::new();
+    for (name, owner) in items {
+        owners.entry(name).or_default().insert(owner);
+    }
+    owners.into_iter().filter(|(_, owners)| owners.len() > 1).map(|(name, _)| name).collect()
+}
+
+fn display_name(name: &str, owner: &Owner, ambiguous: &BTreeSet<&str>) -> String {
+    match owner {
+        Owner::Function(index) if ambiguous.contains(name) => format!("{name}[{index}]"),
+        _ => name.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +244,21 @@ mod tests {
         same_name.owner = Owner::Function(1);
         let text = test_with(Analysis { findings: vec![finding(Class::Branch), same_name], ..Analysis::default() }, None).to_text();
         assert_eq!(text.matches("BRANCH in f").count(), 2, "{text}");
+
+        let at = |offset| Finding { native_offset: offset, ..finding(Class::Branch) };
+        let many: Vec<Finding> = (0..7).map(at).collect();
+        let text = test_with(Analysis { findings: many, ..Analysis::default() }, None).to_text();
+        assert_eq!(text.matches("BRANCH in f").count(), MAX_SITES_SHOWN, "{text}");
+        assert!(text.contains("and 3 more branch findings in f."), "{text}");
+
+        let other = |offset| Finding { owner: Owner::Function(9), native_offset: offset, ..finding(Class::Branch) };
+        let two_functions: Vec<Finding> = (0..7).map(at).chain((0..6).map(other)).collect();
+        let text = test_with(Analysis { findings: two_functions, ..Analysis::default() }, None).to_text();
+        assert!(text.contains("and 3 more branch findings in f[0]") && text.contains("and 2 more branch findings in f[9]"), "{text}");
+
+        let one_hidden: Vec<Finding> = (0..7).map(at).chain([other(0)]).collect();
+        let text = test_with(Analysis { findings: one_hidden, ..Analysis::default() }, None).to_text();
+        assert!(text.contains("and 3 more branch findings in f[0]"), "{text}");
 
         let mut strange = finding(Class::Unclassified);
         strange.kind = "Overlap".to_string();
