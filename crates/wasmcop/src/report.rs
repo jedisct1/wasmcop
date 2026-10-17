@@ -21,6 +21,8 @@ pub struct TestResult {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckReport {
+    /// Whether `--blame` was used, so that `Finding::reached_from` means something.
+    pub blamed: bool,
     pub tests: Vec<TestResult>,
 }
 
@@ -44,7 +46,7 @@ impl CheckReport {
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         for test in &self.tests {
-            write_test(&mut out, test);
+            write_test(&mut out, test, self.blamed);
         }
         out
     }
@@ -62,7 +64,7 @@ pub fn cell_labels(cells: &[Cell]) -> Vec<String> {
     }
 }
 
-fn write_test(out: &mut String, test: &TestResult) {
+fn write_test(out: &mut String, test: &TestResult, blamed: bool) {
     let _ = writeln!(out, "{}", test.name);
     write_table(out, test);
 
@@ -77,7 +79,7 @@ fn write_test(out: &mut String, test: &TestResult) {
             let _ = writeln!(out, "  {}: warning: {warning}", cell.cell);
         }
     }
-    write_findings(out, test);
+    write_findings(out, test, blamed);
     out.push('\n');
 }
 
@@ -125,7 +127,7 @@ struct GroupKey {
     place: Place,
 }
 
-fn write_findings(out: &mut String, test: &TestResult) {
+fn write_findings(out: &mut String, test: &TestResult, blamed: bool) {
     let mut groups: BTreeMap<GroupKey, Vec<(&str, &Finding)>> = BTreeMap::new();
     for cell in &test.cells {
         for finding in &cell.analysis.findings {
@@ -138,11 +140,11 @@ fn write_findings(out: &mut String, test: &TestResult) {
     }
 
     for (key, findings) in groups {
-        write_group(out, &key, &findings);
+        write_group(out, test, &key, &findings, blamed);
     }
 }
 
-fn write_group(out: &mut String, key: &GroupKey, findings: &[(&str, &Finding)]) {
+fn write_group(out: &mut String, test: &TestResult, key: &GroupKey, findings: &[(&str, &Finding)], blamed: bool) {
     let first = findings[0].1;
     let _ = write!(out, "  {} in {}", key.class.name().to_uppercase(), first.function);
     match (&key.place, &key.owner) {
@@ -174,6 +176,13 @@ fn write_group(out: &mut String, key: &GroupKey, findings: &[(&str, &Finding)]) 
             }
             (None, None) => {}
         }
+        if blamed && finding.reached_from.is_empty() {
+            let unknown = test.cells.iter().any(|c| c.cell == *cell && c.analysis.blame_failed);
+            let text = if unknown { "couldn't tell which secret causes this, because a blame run failed" } else { "no single secret reproduces this, so it may take several together" };
+            let _ = writeln!(out, "      {text}");
+        } else if blamed {
+            let _ = writeln!(out, "      reached from: {}", finding.reached_from.join(", "));
+        }
     }
 }
 
@@ -183,6 +192,7 @@ mod tests {
 
     fn test_with(analysis: Analysis, skipped: Option<&str>) -> CheckReport {
         CheckReport {
+            blamed: false,
             tests: vec![TestResult {
                 name: "t".to_string(),
                 cells: vec![CellResult { cell: "cranelift".to_string(), skipped: skipped.map(str::to_string), analysis }],

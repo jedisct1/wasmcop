@@ -23,6 +23,7 @@ pub struct Settings {
     pub runner: PathBuf,
     pub work_dir: PathBuf,
     pub jobs: usize,
+    pub blame: bool,
 }
 
 pub struct Compiled {
@@ -38,17 +39,18 @@ struct Module<'a> {
     source: &'a SourceInfo<'a>,
 }
 
-struct Work {
+struct Work<'a> {
     job: Job,
     dir: PathBuf,
+    compiled: &'a Compiled,
 }
 
-impl Work {
-    fn new(job: &Job, poison: Poison, compiled: &Compiled, dir: PathBuf) -> Work {
+impl<'a> Work<'a> {
+    fn new(job: &Job, poison: Poison, compiled: &'a Compiled, dir: PathBuf) -> Work<'a> {
         let mut job = job.clone();
         job.poison = poison;
         job.artifact = compiled.path.clone();
-        Work { job, dir }
+        Work { job, dir, compiled }
     }
 }
 
@@ -206,12 +208,61 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
         results.push(TestResult { name: test.name.clone(), cells: cell_results });
     }
 
-    Ok(CheckReport { tests: results })
+    if settings.blame {
+        blame(&mut results, &resolved, &cells, &builds, &module, settings)?;
+    }
+    Ok(CheckReport { blamed: settings.blame, tests: results })
+}
+
+/// Re-runs each cell that has findings with one secret poisoned at a time, and credits each secret with what it causes.
+fn blame(results: &mut [TestResult], resolved: &[Resolved], cells: &[Cell], builds: &[Build], module: &Module, settings: &Settings) -> Result<()> {
+    let needs_blame = |result: &CellResult, build: &'_ Build| !result.analysis.findings.is_empty() && build.is_ok();
+
+    let mut work = Vec::new();
+    for (index, (result, test)) in results.iter().zip(resolved).enumerate() {
+        for ((cell, build), cell_result) in cells.iter().zip(builds).zip(&result.cells) {
+            if let (true, Ok(compiled)) = (needs_blame(cell_result, build), build) {
+                for (secret, label) in test.secrets.iter().enumerate() {
+                    let dir = settings.work_dir.join(format!("test-{index}")).join(cell.slug()).join(format!("blame-{secret}"));
+                    work.push(Work::new(&test.job, Poison::Only(label.clone()), compiled, dir));
+                }
+            }
+        }
+    }
+    let mut runs = run_all(&work, settings)?.into_iter().zip(&work);
+
+    for (result, test) in results.iter_mut().zip(resolved) {
+        for (cell_result, build) in result.cells.iter_mut().zip(builds) {
+            if needs_blame(cell_result, build) {
+                for label in &test.secrets {
+                    let (run, item) = runs.next().expect("one run per job");
+                    let single = analyze_run(&run, item.compiled, module)?;
+                    merge_blame(&mut cell_result.analysis, &single, label);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn merge_blame(analysis: &mut Analysis, single: &Analysis, label: &str) {
+    if !single.failures.is_empty() {
+        analysis.blame_failed = true;
+        analysis.failures.extend(single.failures.iter().map(|failure| format!("while checking which findings come from {label}: {failure}")));
+        return;
+    }
+    for finding in &mut analysis.findings {
+        if single.findings.iter().any(|f| f.same_site(finding)) {
+            finding.reached_from.push(label.to_string());
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analyze::Finding;
+    use crate::classify::Class;
     use crate::compile::{Backend, CpuProfile, Opt};
 
     #[test]
@@ -229,5 +280,19 @@ mod tests {
         let other = Cell { cpu: CpuProfile::Sse42, ..cell };
         assert_eq!(unique(&[cell, other, cell]), [cell, other]);
         assert_eq!(Cell::full(&Backend::ALL, &CpuProfile::ALL).len(), (1 + 3 + 4) * 3);
+    }
+
+    #[test]
+    fn a_failed_blame_run_is_not_evidence() {
+        let finding = Finding::sample(Class::Branch);
+        let mut analysis = Analysis { findings: vec![finding.clone()], ..Analysis::default() };
+        merge_blame(&mut analysis, &Analysis { findings: vec![finding.clone()], ..Analysis::default() }, "a");
+        assert_eq!(analysis.findings[0].reached_from, ["a"]);
+
+        let failed = Analysis { failures: vec!["trapped".to_string()], findings: vec![finding], ..Analysis::default() };
+        merge_blame(&mut analysis, &failed, "b");
+        assert_eq!(analysis.findings[0].reached_from, ["a"]);
+        assert!(analysis.blame_failed);
+        assert!(analysis.failures[0].contains("from b: trapped"));
     }
 }

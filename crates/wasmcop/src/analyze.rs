@@ -21,6 +21,8 @@ pub struct Finding {
     pub occurrences: u64,
     pub kind: String,
     pub what: String,
+    /// With `--blame`, the secrets that cause this finding on their own.
+    pub reached_from: Vec<String>,
 }
 
 impl Finding {
@@ -38,7 +40,13 @@ impl Finding {
             occurrences: 0,
             kind: error.kind.clone(),
             what: error.what.clone(),
+            reached_from: Vec::new(),
         }
+    }
+
+    /// Whether two findings from different runs of the same code are the same one.
+    pub fn same_site(&self, other: &Finding) -> bool {
+        self.class == other.class && self.owner == other.owner && self.native_offset == other.native_offset
     }
 }
 
@@ -47,6 +55,8 @@ pub struct Analysis {
     pub findings: Vec<Finding>,
     /// Reasons the results can't be trusted, or are incomplete.
     pub failures: Vec<String>,
+    /// A `--blame` run failed, so a finding with no secret credited may just be unknown.
+    pub blame_failed: bool,
     pub warnings: Vec<String>,
 }
 

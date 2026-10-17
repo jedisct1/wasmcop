@@ -44,6 +44,9 @@ struct CheckArgs {
     /// Seed for the test values [default: 1]
     #[arg(long)]
     seed: Option<u64>,
+    /// Find out which secrets cause each finding
+    #[arg(long)]
+    blame: bool,
     #[arg(long, value_enum, default_value_t = Format::Text)]
     format: Format,
     /// How many runs to do at once [default: one per CPU core]
@@ -129,7 +132,7 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
     let temp = tempfile::tempdir()?;
     let work_dir = args.work_dir.clone().unwrap_or_else(|| temp.path().to_path_buf());
     let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
-    let settings = Settings { valgrind: Valgrind::find(None)?, runner: find_runner()?, work_dir, jobs };
+    let settings = Settings { valgrind: Valgrind::find(None)?, runner: find_runner()?, work_dir, jobs, blame: args.blame };
     let report = check(&wasm, &tests, &options, &cells(args), &settings)?;
     match args.format {
         Format::Text => print!("{}", report.to_text()),
