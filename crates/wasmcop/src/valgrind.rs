@@ -77,6 +77,13 @@ impl Valgrind {
     }
 }
 
+pub fn cache_dir() -> Option<PathBuf> {
+    let base = env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
+    Some(base.join("wasmcop"))
+}
+
 /// The runner lives next to the `wasmcop` binary.
 pub fn find_runner() -> Result<PathBuf> {
     let exe = env::current_exe().context("locating the wasmcop binary")?;

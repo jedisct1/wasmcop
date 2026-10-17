@@ -16,6 +16,7 @@ serde_json.workspace = true
 enumset = "1.1.15"
 clap = { version = "4.6.7", features = ["derive"] }
 wat = "1.263"
+turboshake = "0.7.1"
 wasmer-compiler.workspace = true
 wasmparser = "0.263"
 quick-xml = "0.42.0"
