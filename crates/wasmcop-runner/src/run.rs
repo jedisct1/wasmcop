@@ -1,4 +1,4 @@
-use crate::vg;
+use crate::{imports, vg};
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
 use wasmcop_job::{
@@ -62,8 +62,9 @@ fn run_iteration(
     store: &mut Store,
     iteration: &Iteration,
 ) -> Result<IterationReport> {
-    let instance = Instance::new(store, module, &wasmer::Imports::new()).context("instantiating")?;
-    let memory = exported_memory(job, &instance)?;
+    let provided = imports::provide(job, store)?;
+    let instance = Instance::new(store, module, &provided.imports).context("instantiating")?;
+    let memory = provided.memory.or(exported_memory(job, &instance)?);
     let mut state = IterationState {
         job,
         instance: &instance,

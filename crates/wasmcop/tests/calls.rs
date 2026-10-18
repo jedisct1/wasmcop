@@ -75,3 +75,16 @@ fn taint_follows_bound_results_until_declassified() {
     ";
     assert_eq!(leaks(&run_script(&fixture("args.wat"), script)), [false, true, false, false, true]);
 }
+
+#[test]
+fn imported_memory_and_malloc() {
+    let wasm = wat::parse_str(
+        r#"(module
+             (import "env" "memory" (memory 1))
+             (func (export "malloc") (param i32) (result i32) (i32.const 4096))
+             (func (export "branch_at") (param $p i32) (result i32)
+               (if (result i32) (i32.load8_u (local.get $p)) (then (i32.const 1)) (else (i32.const 2)))))"#,
+    )
+    .unwrap();
+    assert_eq!(leaks(&run_script(&wasm, "branch_at(secret bytes(8))")), [true]);
+}

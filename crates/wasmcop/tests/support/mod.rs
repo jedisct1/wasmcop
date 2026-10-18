@@ -52,6 +52,7 @@ fn job(iterations: Vec<Iteration>) -> Job {
         poison: Poison::All,
         memory: MemoryBinding::Exported("memory".to_string()),
         alloc: Alloc::Grow,
+        imports: Vec::new(),
         iterations,
     }
 }

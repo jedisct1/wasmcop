@@ -24,6 +24,7 @@ pub struct Job {
     pub poison: Poison,
     pub memory: MemoryBinding,
     pub alloc: Alloc,
+    pub imports: Vec<Import>,
     pub iterations: Vec<Iteration>,
 }
 
@@ -76,6 +77,34 @@ pub struct Scalar {
     pub ty: ValType,
     #[serde(with = "hex_u128")]
     pub bits: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Import {
+    pub module: String,
+    pub name: String,
+    pub kind: ImportKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ImportKind {
+    Trap {
+        params: Vec<ValType>,
+        results: Vec<ValType>,
+    },
+    Constant {
+        params: Vec<ValType>,
+        results: Vec<Scalar>,
+    },
+    Global {
+        value: Scalar,
+        mutable: bool,
+    },
+    Memory {
+        minimum: u32,
+        maximum: Option<u32>,
+        shared: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

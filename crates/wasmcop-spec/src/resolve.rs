@@ -1,15 +1,15 @@
 //! Turns parsed tests into concrete steps for the runner, checking them against the module.
 
-use crate::module::{ModuleShape, Signature, Type};
+use crate::module::{ImportItem, ModuleShape, Signature, Type};
 use crate::syntax::{Arg, Bound, BufferOptions, Call, Fill, Statement, Target, Value};
 use anyhow::{Context, Result, anyhow, bail};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{Rng, SeedableRng};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use turboshake::TurboShake128;
 use turboshake::digest::{ExtendableOutput, Update};
-use wasmcop_job::{self as job, Alloc, Buffer, Iteration, Job, MemoryBinding, Poison, Region, Scalar, SecretRange, Step, ValType};
+use wasmcop_job::{self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MemoryBinding, Poison, Region, Scalar, SecretRange, Step, ValType};
 
 const DEFAULT_ALIGN: u32 = 16;
 
@@ -19,15 +19,22 @@ pub struct TestCase {
     pub statements: Vec<Statement>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportOverride {
+    Trap,
+    Constant(Literal),
+}
+
 #[derive(Debug, Clone)]
 pub struct Options {
     pub seed: u64,
     pub iterations: u32,
+    pub imports: BTreeMap<String, ImportOverride>,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { seed: 1, iterations: 4 }
+        Options { seed: 1, iterations: 4, imports: BTreeMap::new() }
     }
 }
 
@@ -64,12 +71,14 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
         });
     }
 
+    let imports = imports(shape, options)?;
     let job = Job {
         artifact: PathBuf::new(),
         output: PathBuf::new(),
         poison: Poison::All,
         memory: shape.memory_binding().unwrap_or(MemoryBinding::Unavailable),
         alloc: default_alloc(shape),
+        imports,
         iterations,
     };
     Ok(Resolved { job, secrets })
@@ -82,6 +91,57 @@ fn default_alloc(shape: &ModuleShape) -> Alloc {
     } else {
         Alloc::Grow
     }
+}
+
+fn imports(shape: &ModuleShape, options: &Options) -> Result<Vec<Import>> {
+    let mut imports = Vec::new();
+    let mut missing = Vec::new();
+    for import in &shape.imports {
+        let qualified = format!("{}.{}", import.module, import.name);
+        let kind = match &import.item {
+            ImportItem::Function(signature) => {
+                let (params, results) = plain_signature(signature, &qualified)?;
+                match options.imports.get(&qualified) {
+                    Some(ImportOverride::Trap) => ImportKind::Trap { params, results },
+                    Some(ImportOverride::Constant(value)) => {
+                        let results = results.iter().map(|ty| typed(*value, *ty)).collect::<Result<_>>().with_context(|| qualified.clone())?;
+                        ImportKind::Constant { params, results }
+                    }
+                    None => {
+                        missing.push(qualified);
+                        continue;
+                    }
+                }
+            }
+            ImportItem::Global { ty, mutable } => match (options.imports.get(&qualified), ty) {
+                (Some(ImportOverride::Constant(value)), Type::Val(ty)) => {
+                    ImportKind::Global { value: typed(*value, *ty).with_context(|| qualified.clone())?, mutable: *mutable }
+                }
+                _ => {
+                    missing.push(qualified);
+                    continue;
+                }
+            },
+            ImportItem::Memory => {
+                let memory = shape
+                    .memories
+                    .iter()
+                    .find(|m| m.import.as_ref().is_some_and(|(module, name)| *module == import.module && *name == import.name))
+                    .context("imported memory is missing from the module's memory list")?;
+                ImportKind::Memory { minimum: memory.initial, maximum: memory.maximum, shared: memory.shared }
+            }
+            ImportItem::Table => bail!("imported tables are not supported: {qualified}"),
+            ImportItem::Other => bail!("unsupported import: {qualified}"),
+        };
+        imports.push(Import { module: import.module.clone(), name: import.name.clone(), kind });
+    }
+    if !missing.is_empty() {
+        bail!(
+            "the module imports things Wasmcop doesn't know how to provide: {}\nSay what to do with them in the [imports] table of a spec file",
+            missing.join(", ")
+        );
+    }
+    Ok(imports)
 }
 
 fn plain_signature(signature: &Signature, name: &str) -> Result<(Vec<ValType>, Vec<ValType>)> {
@@ -574,6 +634,19 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_modules_are_rejected() {
+        for (module, reason) in [
+            (r#"(module (memory i64 1))"#.to_string(), "memory64"),
+            (r#"(module (import "env" "m" (memory i64 1)))"#.to_string(), "memory64"),
+            (format!(r#"(module (import "env" "x" (func)) {F})"#), "[imports]"),
+            (format!(r#"(module (import "env" "t" (table 1 funcref)) {F})"#), "tables"),
+        ] {
+            let error = format!("{:#}", try_resolve(&module, "f(1)", 1).unwrap_err());
+            assert!(error.contains(reason), "{error}");
+        }
+    }
+
+    #[test]
     fn calls_are_checked_against_the_signature() {
         let module = r#"(module (memory (export "m") 1)
             (func (export "f") (param i32) (result i32) (i32.const 0))
@@ -636,6 +709,34 @@ mod tests {
 
         let error = format!("{:#}", try_resolve(module, &format!("v(hex({vector}, secret=0..16))"), 1).unwrap_err());
         assert!(error.contains("no buffer options"), "{error}");
+    }
+
+    #[test]
+    fn import_constants_stay_exact() {
+        let module = r#"(module
+            (import "env" "c" (func (result i64)))
+            (import "env" "s" (func (result i32)))
+            (import "env" "g" (global i64)))"#;
+        let provide = |c: Literal, s: Literal, g: Literal| {
+            let mut options = options(1);
+            for (name, value) in [("env.c", c), ("env.s", s), ("env.g", g)] {
+                options.imports.insert(name.to_string(), ImportOverride::Constant(value));
+            }
+            resolve_with(module, "", &options)
+        };
+        let big = (1i128 << 53) + 1;
+        let job = provide(Literal::Int(big), Literal::Int(u32::MAX.into()), Literal::Int(-1)).unwrap().job;
+        let ImportKind::Constant { results, .. } = &job.imports[0].kind else { panic!() };
+        assert_eq!(results[0].bits, big as u128);
+        let ImportKind::Constant { results, .. } = &job.imports[1].kind else { panic!() };
+        assert_eq!(results[0].bits, u32::MAX as u128);
+        let ImportKind::Global { value, .. } = &job.imports[2].kind else { panic!() };
+        assert_eq!(value.bits, u64::MAX as u128);
+
+        for (s, reason) in [(Literal::Int(1 << 32), "doesn't fit"), (Literal::Float(1.5), "float")] {
+            let error = format!("{:#}", provide(Literal::Int(0), s, Literal::Int(0)).unwrap_err());
+            assert!(error.contains(reason), "{error}");
+        }
     }
 
     #[test]
