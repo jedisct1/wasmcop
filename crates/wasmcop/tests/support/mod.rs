@@ -7,7 +7,7 @@ use wasmcop::check::{Settings, check};
 use wasmcop::compile::{self, Backend, Cell};
 use wasmcop::report::CheckReport;
 use wasmcop::valgrind::{Run, Valgrind, find_runner};
-use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType};
+use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType, Wasi};
 use wasmcop_spec::resolve::{Options, TestCase};
 use wasmcop_spec::syntax::parse_script;
 
@@ -53,6 +53,7 @@ fn job(iterations: Vec<Iteration>) -> Job {
         memory: MemoryBinding::Exported("memory".to_string()),
         alloc: Alloc::Grow,
         imports: Vec::new(),
+        wasi: Wasi::default(),
         secret_random: true,
         iterations,
     }

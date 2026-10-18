@@ -21,6 +21,10 @@ const fn wasi(name: &'static str, needs_memory: bool) -> Builtin {
 }
 
 pub const BUILTINS: &[Builtin] = &[
+    wasi("args_get", true),
+    wasi("args_sizes_get", true),
+    wasi("environ_get", true),
+    wasi("environ_sizes_get", true),
     wasi("random_get", true),
 ];
 
@@ -50,6 +54,7 @@ pub struct Job {
     pub memory: MemoryBinding,
     pub alloc: Alloc,
     pub imports: Vec<Import>,
+    pub wasi: Wasi,
     pub secret_random: bool,
     pub iterations: Vec<Iteration>,
 }
@@ -133,6 +138,12 @@ pub enum ImportKind {
         maximum: Option<u32>,
         shared: bool,
     },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Wasi {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

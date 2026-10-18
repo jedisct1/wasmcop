@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use turboshake::TurboShake128;
 use turboshake::digest::{ExtendableOutput, Update};
-use wasmcop_job::{self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MemoryBinding, Poison, RANDOM_LABEL, Region, Scalar, SecretRange, Step, ValType, WASI_MODULE, builtin};
+use wasmcop_job::{self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MemoryBinding, Poison, RANDOM_LABEL, Region, Scalar, SecretRange, Step, ValType, WASI_MODULE, Wasi, builtin};
 
 const DEFAULT_ALIGN: u32 = 16;
 
@@ -30,12 +30,13 @@ pub struct Options {
     pub seed: u64,
     pub iterations: u32,
     pub secret_random: bool,
+    pub wasi: Wasi,
     pub imports: BTreeMap<String, ImportOverride>,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { seed: 1, iterations: 4, secret_random: true, imports: BTreeMap::new() }
+        Options { seed: 1, iterations: 4, secret_random: true, wasi: Wasi::default(), imports: BTreeMap::new() }
     }
 }
 
@@ -86,6 +87,7 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
         memory: shape.memory_binding().unwrap_or(MemoryBinding::Unavailable),
         alloc: default_alloc(shape),
         imports,
+        wasi: options.wasi.clone(),
         secret_random: options.secret_random,
         iterations,
     };
