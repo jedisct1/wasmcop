@@ -53,6 +53,7 @@ fn job(iterations: Vec<Iteration>) -> Job {
         memory: MemoryBinding::Exported("memory".to_string()),
         alloc: Alloc::Grow,
         imports: Vec::new(),
+        secret_random: true,
         iterations,
     }
 }
@@ -67,7 +68,7 @@ pub fn secret_i32(value: u32) -> Arg {
 }
 
 pub fn iteration(steps: Vec<Step>) -> Iteration {
-    Iteration { label: "test".to_string(), steps }
+    Iteration { label: "test".to_string(), random_key: vec![0; 32], steps }
 }
 
 pub fn call(function: &str, args: Vec<Arg>) -> Step {

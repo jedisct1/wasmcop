@@ -1,6 +1,7 @@
 mod imports;
 mod run;
 mod vg;
+mod wasi;
 
 use anyhow::{Context, Result, bail};
 use std::process::ExitCode;

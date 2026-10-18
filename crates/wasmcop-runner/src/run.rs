@@ -1,4 +1,4 @@
-use crate::{imports, vg};
+use crate::{imports, vg, wasi};
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
 use wasmcop_job::{
@@ -62,9 +62,10 @@ fn run_iteration(
     store: &mut Store,
     iteration: &Iteration,
 ) -> Result<IterationReport> {
-    let provided = imports::provide(job, store)?;
+    let provided = imports::provide(job, iteration, store)?;
     let instance = Instance::new(store, module, &provided.imports).context("instantiating")?;
     let memory = provided.memory.or(exported_memory(job, &instance)?);
+    provided.host.as_mut(store).memory = memory.clone();
     let mut state = IterationState {
         job,
         instance: &instance,
@@ -298,10 +299,7 @@ impl IterationState<'_> {
             Region::Absolute { address, length } => (*address, *length),
         };
         let view = self.memory()?.view(store);
-        if u64::from(address) + u64::from(length) > view.data_size() {
-            bail!("region {address:#x}+{length} is outside linear memory");
-        }
-        let pointer = unsafe { view.data_ptr().add(address as usize) as *const u8 };
+        let pointer = wasi::guest_pointer(&view, address, length).ok_or_else(|| anyhow!("region {address:#x}+{length} is outside linear memory"))?;
         Ok((pointer, length as usize))
     }
 

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use turboshake::TurboShake128;
 use turboshake::digest::{ExtendableOutput, Update};
-use wasmcop_job::{self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MemoryBinding, Poison, Region, Scalar, SecretRange, Step, ValType};
+use wasmcop_job::{self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MemoryBinding, Poison, RANDOM_LABEL, Region, Scalar, SecretRange, Step, ValType, WASI_MODULE, builtin};
 
 const DEFAULT_ALIGN: u32 = 16;
 
@@ -29,12 +29,13 @@ pub enum ImportOverride {
 pub struct Options {
     pub seed: u64,
     pub iterations: u32,
+    pub secret_random: bool,
     pub imports: BTreeMap<String, ImportOverride>,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { seed: 1, iterations: 4, imports: BTreeMap::new() }
+        Options { seed: 1, iterations: 4, secret_random: true, imports: BTreeMap::new() }
     }
 }
 
@@ -58,7 +59,8 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
             steps: Vec::new(),
             next_slot: 0,
             next_item: 0,
-            label_uses: HashMap::new(),
+            // Taken up front, so that a variable with one of these names can't be mistaken for them.
+            label_uses: HashMap::from([(RANDOM_LABEL.to_string(), 1)]),
             poisoned: HashMap::new(),
             secrets: &mut secrets,
         };
@@ -67,11 +69,16 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
         }
         iterations.push(Iteration {
             label: pattern(iteration).label(iteration),
+            random_key: random_key(options.seed, &test.name, iteration).to_vec(),
             steps: walker.steps,
         });
     }
 
     let imports = imports(shape, options)?;
+    let is_builtin = |module: &str, name: &str| imports.iter().any(|i| i.module == module && i.name == name && matches!(i.kind, ImportKind::Builtin));
+    if options.secret_random && is_builtin(WASI_MODULE, "random_get") {
+        secrets.insert(RANDOM_LABEL.to_string());
+    }
     let job = Job {
         artifact: PathBuf::new(),
         output: PathBuf::new(),
@@ -79,6 +86,7 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
         memory: shape.memory_binding().unwrap_or(MemoryBinding::Unavailable),
         alloc: default_alloc(shape),
         imports,
+        secret_random: options.secret_random,
         iterations,
     };
     Ok(Resolved { job, secrets })
@@ -94,6 +102,7 @@ fn default_alloc(shape: &ModuleShape) -> Alloc {
 }
 
 fn imports(shape: &ModuleShape, options: &Options) -> Result<Vec<Import>> {
+    let memory_usable = shape.memory_binding();
     let mut imports = Vec::new();
     let mut missing = Vec::new();
     for import in &shape.imports {
@@ -107,10 +116,21 @@ fn imports(shape: &ModuleShape, options: &Options) -> Result<Vec<Import>> {
                         let results = results.iter().map(|ty| typed(*value, *ty)).collect::<Result<_>>().with_context(|| qualified.clone())?;
                         ImportKind::Constant { params, results }
                     }
-                    None => {
-                        missing.push(qualified);
-                        continue;
-                    }
+                    None => match builtin(&import.module, &import.name) {
+                        Some(known) => {
+                            if known.needs_memory
+                                && let Err(reason) = &memory_usable
+                            {
+                                bail!("{qualified} needs memory access, but {reason}");
+                            }
+                            ImportKind::Builtin
+                        }
+                        None if import.module == WASI_MODULE => ImportKind::Trap { params, results },
+                        None => {
+                            missing.push(qualified);
+                            continue;
+                        }
+                    },
                 }
             }
             ImportItem::Global { ty, mutable } => match (options.imports.get(&qualified), ty) {
@@ -740,6 +760,23 @@ mod tests {
     }
 
     #[test]
+    fn wasi_needs_memory_only_when_it_uses_it() {
+        let import = |name: &str, signature: &str| {
+            format!(r#"(module (import "wasi_snapshot_preview1" "{name}" (func {signature})) (memory 1))"#)
+        };
+        let random = import("random_get", "(param i32 i32) (result i32)");
+        assert!(format!("{:#}", try_resolve(&random, "", 1).unwrap_err()).contains("needs memory access"));
+        try_resolve(&import("fd_sync", "(param i32) (result i32)"), "", 1).unwrap();
+        try_resolve(&import("fd_close", "(param i32) (result i32)"), "", 1).unwrap();
+
+        for action in [ImportOverride::Trap, ImportOverride::Constant(Literal::Int(0))] {
+            let mut options = options(1);
+            options.imports.insert("wasi_snapshot_preview1.random_get".to_string(), action);
+            resolve_with(&random, "", &options).unwrap();
+        }
+    }
+
+    #[test]
     fn values_are_reproducible_and_vary_by_iteration() {
         let module = with_f(r#"(memory (export "m") 1)"#);
         let script = "a = secret bytes(8)\nb = bytes(8)\nf(a)";
@@ -758,6 +795,7 @@ mod tests {
         assert_eq!(data(2, 0), [0xffu8; 8]);
         assert_ne!(data(0, 0), data(3, 0));
         assert_eq!(data(0, 1), data(3, 1));
+        assert_ne!(first.iterations[0].random_key, first.iterations[1].random_key);
     }
 
     #[test]
@@ -772,5 +810,8 @@ mod tests {
         assert_eq!(labels("x = out(4)\npoison(x)\npoison(x)", module), ["x"]);
         assert_eq!(labels("x = secret bytes(4)\npoison(x)", module), ["x"]);
         assert_eq!(labels("poison(0x10, 4)\npoison(0x10, 4)\npoison(0x20, 4)", module), ["0x10+4", "0x20+4"]);
+
+        let random = r#"(module (import "wasi_snapshot_preview1" "random_get" (func (param i32 i32) (result i32))) (memory (export "m") 1))"#;
+        assert_eq!(labels("random_get = secret bytes(4)", random), ["random_get", "random_get#2"]);
     }
 }

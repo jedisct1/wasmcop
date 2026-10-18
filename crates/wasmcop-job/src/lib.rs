@@ -3,6 +3,31 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// `random_get` output counts as one secret, under this name.
+pub const RANDOM_LABEL: &str = "random_get";
+
+pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
+
+/// A function the runner provides itself.
+#[derive(Debug, Clone, Copy)]
+pub struct Builtin {
+    pub module: &'static str,
+    pub name: &'static str,
+    pub needs_memory: bool,
+}
+
+const fn wasi(name: &'static str, needs_memory: bool) -> Builtin {
+    Builtin { module: WASI_MODULE, name, needs_memory }
+}
+
+pub const BUILTINS: &[Builtin] = &[
+    wasi("random_get", true),
+];
+
+pub fn builtin(module: &str, name: &str) -> Option<&'static Builtin> {
+    BUILTINS.iter().find(|b| b.module == module && b.name == name)
+}
+
 pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -25,6 +50,7 @@ pub struct Job {
     pub memory: MemoryBinding,
     pub alloc: Alloc,
     pub imports: Vec<Import>,
+    pub secret_random: bool,
     pub iterations: Vec<Iteration>,
 }
 
@@ -88,6 +114,8 @@ pub struct Import {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportKind {
+    /// One of `BUILTINS`.
+    Builtin,
     Trap {
         params: Vec<ValType>,
         results: Vec<ValType>,
@@ -110,6 +138,9 @@ pub enum ImportKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Iteration {
     pub label: String,
+    /// Key for the `random_get` stream.
+    #[serde(with = "hex_bytes")]
+    pub random_key: Vec<u8>,
     pub steps: Vec<Step>,
 }
 

@@ -1,12 +1,14 @@
 use crate::run::to_value;
-use anyhow::Result;
-use wasmcop_job::{ImportKind, Job, MemoryBinding, ValType};
-use wasmer::{Function, FunctionType, Global, Imports, Memory, MemoryType, RuntimeError, Store, Type, Value};
+use crate::wasi::{self, Host};
+use anyhow::{Result, bail};
+use wasmcop_job::{ImportKind, Iteration, Job, MemoryBinding, ValType};
+use wasmer::{Function, FunctionEnv, FunctionType, Global, Imports, Memory, MemoryType, RuntimeError, Store, Type, Value};
 
 pub struct Provided {
     pub imports: Imports,
     /// The memory buffers go in, when the module imports it.
     pub memory: Option<Memory>,
+    pub host: FunctionEnv<Host>,
 }
 
 fn wasmer_type(ty: ValType) -> Type {
@@ -26,12 +28,17 @@ fn function_type(params: &[ValType], results: &[ValType]) -> FunctionType {
     )
 }
 
-pub fn provide(job: &Job, store: &mut Store) -> Result<Provided> {
+pub fn provide(job: &Job, iteration: &Iteration, store: &mut Store) -> Result<Provided> {
     let mut imports = Imports::new();
     let mut memory = None;
+    let host = FunctionEnv::new(store, Host::new(job, iteration)?);
     for import in &job.imports {
         let (module, name) = (import.module.as_str(), import.name.as_str());
         match &import.kind {
+            ImportKind::Builtin => match wasi::builtin(store, &host, module, name) {
+                Some(function) => imports.define(module, name, function),
+                None => bail!("{module}.{name} isn't implemented"),
+            },
             ImportKind::Trap { params, results } => {
                 let message = format!("{module}.{name} was called");
                 let function = Function::new(store, function_type(params, results), move |_| {
@@ -59,5 +66,5 @@ pub fn provide(job: &Job, store: &mut Store) -> Result<Provided> {
             }
         }
     }
-    Ok(Provided { imports, memory })
+    Ok(Provided { imports, memory, host })
 }
