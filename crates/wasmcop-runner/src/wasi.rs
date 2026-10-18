@@ -9,6 +9,7 @@ use wasmcop_job::{Iteration, Job, Poison, RANDOM_LABEL, WASI_MODULE};
 use wasmer::{Function, FunctionEnv, FunctionEnvMut, Memory, MemoryView, Store};
 
 const SUCCESS: i32 = 0;
+const BADF: i32 = 8;
 const FAULT: i32 = 21;
 const INVAL: i32 = 28;
 
@@ -16,12 +17,20 @@ const CLOCK_START: u64 = 1_700_000_000_000_000_000;
 const CLOCK_STEP: u64 = 1_000_000;
 const CLOCK_IDS: i32 = 4;
 
+const FILETYPE_CHARACTER_DEVICE: u8 = 2;
+const RIGHT_FD_READ: u64 = 1 << 1;
+const RIGHT_FD_WRITE: u64 = 1 << 6;
+const RIGHT_POLL_FD_READWRITE: u64 = 1 << 27;
+
+const STDIO: usize = 3;
+
 pub struct Host {
     pub memory: Option<Memory>,
     random: ChaCha20Rng,
     clock: u64,
     args: Vec<Vec<u8>>,
     environ: Vec<Vec<u8>>,
+    open: [bool; STDIO],
     poison: Poison,
     secret_random: bool,
 }
@@ -40,9 +49,14 @@ impl Host {
             clock: CLOCK_START,
             args: job.wasi.args.iter().cloned().map(terminated).collect(),
             environ: job.wasi.env.iter().map(|(k, v)| terminated(format!("{k}={v}"))).collect(),
+            open: [true; STDIO],
             poison: job.poison.clone(),
             secret_random: job.secret_random,
         })
+    }
+
+    fn is_open(&self, fd: i32) -> bool {
+        usize::try_from(fd).ok().and_then(|fd| self.open.get(fd).copied()).unwrap_or(false)
     }
 }
 
@@ -133,6 +147,28 @@ fn clock_time_get(mut env: FunctionEnvMut<Host>, id: i32, _precision: i64, out: 
     errno(write_u64(&view, out, time))
 }
 
+fn fd_close(mut env: FunctionEnvMut<Host>, fd: i32) -> i32 {
+    let host = env.data_mut();
+    if !host.is_open(fd) {
+        return BADF;
+    }
+    host.open[fd as usize] = false;
+    SUCCESS
+}
+
+fn fd_fdstat_get(mut env: FunctionEnvMut<Host>, fd: i32, out: i32) -> i32 {
+    let (host, store) = env.data_and_store_mut();
+    if !host.is_open(fd) {
+        return BADF;
+    }
+    let Some(view) = view(&host.memory, &store) else { return FAULT };
+    let rights = RIGHT_POLL_FD_READWRITE | if fd == 0 { RIGHT_FD_READ } else { RIGHT_FD_WRITE };
+    let mut fdstat = [0u8; 24];
+    fdstat[0] = FILETYPE_CHARACTER_DEVICE;
+    fdstat[8..16].copy_from_slice(&rights.to_le_bytes());
+    errno(write_all(&view, out, &fdstat))
+}
+
 fn random_get(mut env: FunctionEnvMut<Host>, buffer: i32, length: i32) -> i32 {
     let (host, store) = env.data_and_store_mut();
     let Some(view) = view(&host.memory, &store) else { return FAULT };
@@ -170,6 +206,8 @@ pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &
             "environ_sizes_get" => typed!(environ_sizes_get),
             "clock_res_get" => typed!(clock_res_get),
             "clock_time_get" => typed!(clock_time_get),
+            "fd_close" => typed!(fd_close),
+            "fd_fdstat_get" => typed!(fd_fdstat_get),
             "random_get" => typed!(random_get),
             _ => None,
         },
