@@ -10,10 +10,16 @@ use wasmer::{Function, FunctionEnv, FunctionEnvMut, Memory, MemoryView, Store};
 
 const SUCCESS: i32 = 0;
 const FAULT: i32 = 21;
+const INVAL: i32 = 28;
+
+const CLOCK_START: u64 = 1_700_000_000_000_000_000;
+const CLOCK_STEP: u64 = 1_000_000;
+const CLOCK_IDS: i32 = 4;
 
 pub struct Host {
     pub memory: Option<Memory>,
     random: ChaCha20Rng,
+    clock: u64,
     args: Vec<Vec<u8>>,
     environ: Vec<Vec<u8>>,
     poison: Poison,
@@ -31,6 +37,7 @@ impl Host {
         Ok(Host {
             memory: None,
             random: ChaCha20Rng::from_seed(key),
+            clock: CLOCK_START,
             args: job.wasi.args.iter().cloned().map(terminated).collect(),
             environ: job.wasi.env.iter().map(|(k, v)| terminated(format!("{k}={v}"))).collect(),
             poison: job.poison.clone(),
@@ -48,6 +55,10 @@ fn write_all(view: &MemoryView, address: i32, bytes: &[u8]) -> Result<(), i32> {
 }
 
 fn write_u32(view: &MemoryView, address: i32, value: u32) -> Result<(), i32> {
+    write_all(view, address, &value.to_le_bytes())
+}
+
+fn write_u64(view: &MemoryView, address: i32, value: u64) -> Result<(), i32> {
     write_all(view, address, &value.to_le_bytes())
 }
 
@@ -102,6 +113,26 @@ fn environ_get(mut env: FunctionEnvMut<Host>, pointers: i32, buffer: i32) -> i32
     strings_get(&mut env, |host| &host.environ, pointers, buffer)
 }
 
+fn clock_res_get(mut env: FunctionEnvMut<Host>, id: i32, out: i32) -> i32 {
+    if !(0..CLOCK_IDS).contains(&id) {
+        return INVAL;
+    }
+    let (host, store) = env.data_and_store_mut();
+    let Some(view) = view(&host.memory, &store) else { return FAULT };
+    errno(write_u64(&view, out, CLOCK_STEP))
+}
+
+fn clock_time_get(mut env: FunctionEnvMut<Host>, id: i32, _precision: i64, out: i32) -> i32 {
+    if !(0..CLOCK_IDS).contains(&id) {
+        return INVAL;
+    }
+    let (host, store) = env.data_and_store_mut();
+    let time = host.clock;
+    host.clock += CLOCK_STEP;
+    let Some(view) = view(&host.memory, &store) else { return FAULT };
+    errno(write_u64(&view, out, time))
+}
+
 fn random_get(mut env: FunctionEnvMut<Host>, buffer: i32, length: i32) -> i32 {
     let (host, store) = env.data_and_store_mut();
     let Some(view) = view(&host.memory, &store) else { return FAULT };
@@ -137,6 +168,8 @@ pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &
             "args_sizes_get" => typed!(args_sizes_get),
             "environ_get" => typed!(environ_get),
             "environ_sizes_get" => typed!(environ_sizes_get),
+            "clock_res_get" => typed!(clock_res_get),
+            "clock_time_get" => typed!(clock_time_get),
             "random_get" => typed!(random_get),
             _ => None,
         },

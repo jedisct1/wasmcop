@@ -25,6 +25,8 @@ pub const BUILTINS: &[Builtin] = &[
     wasi("args_sizes_get", true),
     wasi("environ_get", true),
     wasi("environ_sizes_get", true),
+    wasi("clock_res_get", true),
+    wasi("clock_time_get", true),
     wasi("random_get", true),
 ];
 
