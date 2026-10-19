@@ -12,10 +12,12 @@ const SUCCESS: i32 = 0;
 const BADF: i32 = 8;
 const FAULT: i32 = 21;
 const INVAL: i32 = 28;
+const SPIPE: i32 = 70;
 
 const CLOCK_START: u64 = 1_700_000_000_000_000_000;
 const CLOCK_STEP: u64 = 1_000_000;
 const CLOCK_IDS: i32 = 4;
+const WHENCE_VALUES: i32 = 3;
 
 const FILETYPE_CHARACTER_DEVICE: u8 = 2;
 const RIGHT_FD_READ: u64 = 1 << 1;
@@ -169,6 +171,24 @@ fn fd_fdstat_get(mut env: FunctionEnvMut<Host>, fd: i32, out: i32) -> i32 {
     errno(write_all(&view, out, &fdstat))
 }
 
+fn fd_prestat_get(_env: FunctionEnvMut<Host>, _fd: i32, _out: i32) -> i32 {
+    BADF
+}
+
+fn fd_prestat_dir_name(_env: FunctionEnvMut<Host>, _fd: i32, _path: i32, _length: i32) -> i32 {
+    BADF
+}
+
+fn fd_seek(mut env: FunctionEnvMut<Host>, fd: i32, _offset: i64, whence: i32, _out: i32) -> i32 {
+    if !(0..WHENCE_VALUES).contains(&whence) {
+        INVAL
+    } else if env.data_mut().is_open(fd) {
+        SPIPE
+    } else {
+        BADF
+    }
+}
+
 fn random_get(mut env: FunctionEnvMut<Host>, buffer: i32, length: i32) -> i32 {
     let (host, store) = env.data_and_store_mut();
     let Some(view) = view(&host.memory, &store) else { return FAULT };
@@ -208,6 +228,9 @@ pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &
             "clock_time_get" => typed!(clock_time_get),
             "fd_close" => typed!(fd_close),
             "fd_fdstat_get" => typed!(fd_fdstat_get),
+            "fd_prestat_get" => typed!(fd_prestat_get),
+            "fd_prestat_dir_name" => typed!(fd_prestat_dir_name),
+            "fd_seek" => typed!(fd_seek),
             "random_get" => typed!(random_get),
             _ => None,
         },

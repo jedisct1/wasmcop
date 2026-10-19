@@ -29,6 +29,9 @@ pub const BUILTINS: &[Builtin] = &[
     wasi("clock_time_get", true),
     wasi("fd_close", false),
     wasi("fd_fdstat_get", true),
+    wasi("fd_prestat_get", true),
+    wasi("fd_prestat_dir_name", true),
+    wasi("fd_seek", true),
     wasi("random_get", true),
 ];
 
