@@ -7,6 +7,7 @@ const RUNNING_ON_VALGRIND: u64 = 0x1001;
 const COUNT_ERRORS: u64 = 0x1201;
 const MAKE_MEM_UNDEFINED: u64 = 0x4d43_0001;
 const MAKE_MEM_DEFINED: u64 = 0x4d43_0002;
+const CHECK_MEM_IS_DEFINED: u64 = 0x4d43_0005;
 const GET_VBITS: u64 = 0x4d43_0008;
 
 /// The magic sequence from `valgrind.h`.
@@ -41,6 +42,11 @@ pub fn make_undefined(ptr: *const u8, len: usize) {
 
 pub fn make_defined(ptr: *const u8, len: usize) {
     request(MAKE_MEM_DEFINED, ptr as u64, len as u64, 0);
+}
+
+/// Makes Valgrind report an error if any byte is undefined.
+pub fn check_defined(ptr: *const u8, len: usize) {
+    request(CHECK_MEM_IS_DEFINED, ptr as u64, len as u64, 0);
 }
 
 pub fn undefined_value<T: Copy>(value: T) -> T {

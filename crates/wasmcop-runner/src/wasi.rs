@@ -5,6 +5,7 @@ use crate::vg;
 use anyhow::{Context, Result};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{Rng, SeedableRng};
+use std::io::Write;
 use wasmcop_job::{Iteration, Job, Poison, RANDOM_LABEL, WASI_MODULE};
 use wasmer::{Function, FunctionEnv, FunctionEnvMut, Memory, MemoryView, Store};
 
@@ -76,6 +77,12 @@ fn write_u32(view: &MemoryView, address: i32, value: u32) -> Result<(), i32> {
 
 fn write_u64(view: &MemoryView, address: i32, value: u64) -> Result<(), i32> {
     write_all(view, address, &value.to_le_bytes())
+}
+
+fn read_u32(view: &MemoryView, address: u64) -> Result<u32, i32> {
+    let mut bytes = [0; 4];
+    view.read(address, &mut bytes).map_err(|_| FAULT)?;
+    Ok(u32::from_le_bytes(bytes))
 }
 
 /// `None` if any of the range is outside linear memory.
@@ -189,6 +196,43 @@ fn fd_seek(mut env: FunctionEnvMut<Host>, fd: i32, _offset: i64, whence: i32, _o
     }
 }
 
+fn fd_write(mut env: FunctionEnvMut<Host>, fd: i32, iovs: i32, count: i32, written_out: i32) -> i32 {
+    let (host, store) = env.data_and_store_mut();
+    if !host.is_open(fd) || fd == 0 {
+        return BADF;
+    }
+    let Some(view) = view(&host.memory, &store) else { return FAULT };
+
+    // Check everything first, so that a bad call writes nothing.
+    if guest_pointer(&view, written_out as u32, 4).is_none() {
+        return FAULT;
+    }
+    let mut buffers = Vec::new();
+    let mut total: u64 = 0;
+    for index in 0..u64::from(count as u32) {
+        let entry = u64::from(iovs as u32) + index * 8;
+        let (Ok(pointer), Ok(length)) = (read_u32(&view, entry), read_u32(&view, entry + 4)) else {
+            return FAULT;
+        };
+        let Some(data) = guest_pointer(&view, pointer, length) else { return FAULT };
+        total += u64::from(length);
+        if total > u64::from(u32::MAX) {
+            return INVAL;
+        }
+        buffers.push((data, length as usize));
+    }
+
+    let mut output: Box<dyn Write> = if fd == 1 { Box::new(std::io::stdout()) } else { Box::new(std::io::stderr()) };
+    for (data, length) in buffers {
+        // Printing a secret is a leak, so let Valgrind report it.
+        vg::check_defined(data, length);
+        if output.write_all(&vg::defined_copy(data, length)).is_err() {
+            return BADF;
+        }
+    }
+    errno(write_u32(&view, written_out, total as u32))
+}
+
 fn random_get(mut env: FunctionEnvMut<Host>, buffer: i32, length: i32) -> i32 {
     let (host, store) = env.data_and_store_mut();
     let Some(view) = view(&host.memory, &store) else { return FAULT };
@@ -231,6 +275,7 @@ pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &
             "fd_prestat_get" => typed!(fd_prestat_get),
             "fd_prestat_dir_name" => typed!(fd_prestat_dir_name),
             "fd_seek" => typed!(fd_seek),
+            "fd_write" => typed!(fd_write),
             "random_get" => typed!(random_get),
             _ => None,
         },

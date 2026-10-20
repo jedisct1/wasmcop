@@ -32,6 +32,7 @@ pub const BUILTINS: &[Builtin] = &[
     wasi("fd_prestat_get", true),
     wasi("fd_prestat_dir_name", true),
     wasi("fd_seek", true),
+    wasi("fd_write", true),
     wasi("random_get", true),
 ];
 
