@@ -5,6 +5,7 @@ use crate::vg;
 use anyhow::{Context, Result};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{Rng, SeedableRng};
+use std::fmt;
 use std::io::Write;
 use wasmcop_job::{Iteration, Job, Poison, RANDOM_LABEL, WASI_MODULE};
 use wasmer::{Function, FunctionEnv, FunctionEnvMut, Memory, MemoryView, Store};
@@ -62,6 +63,17 @@ impl Host {
         usize::try_from(fd).ok().and_then(|fd| self.open.get(fd).copied()).unwrap_or(false)
     }
 }
+
+#[derive(Debug)]
+pub struct Exit(pub i32);
+
+impl fmt::Display for Exit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "exited with status {}", self.0)
+    }
+}
+
+impl std::error::Error for Exit {}
 
 fn view<'a>(memory: &'a Option<Memory>, store: &'a impl wasmer::AsStoreRef) -> Option<MemoryView<'a>> {
     memory.as_ref().map(|memory| memory.view(store))
@@ -233,6 +245,10 @@ fn fd_write(mut env: FunctionEnvMut<Host>, fd: i32, iovs: i32, count: i32, writt
     errno(write_u32(&view, written_out, total as u32))
 }
 
+fn proc_exit(_env: FunctionEnvMut<Host>, code: i32) -> Result<(), Exit> {
+    Err(Exit(code))
+}
+
 fn random_get(mut env: FunctionEnvMut<Host>, buffer: i32, length: i32) -> i32 {
     let (host, store) = env.data_and_store_mut();
     let Some(view) = view(&host.memory, &store) else { return FAULT };
@@ -276,6 +292,7 @@ pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &
             "fd_prestat_dir_name" => typed!(fd_prestat_dir_name),
             "fd_seek" => typed!(fd_seek),
             "fd_write" => typed!(fd_write),
+            "proc_exit" => typed!(proc_exit),
             "random_get" => typed!(random_get),
             _ => None,
         },

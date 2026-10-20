@@ -319,6 +319,9 @@ impl IterationState<'_> {
 }
 
 fn failure_outcome(function: &str, trap: RuntimeError) -> Outcome {
+    if let Some(exit) = trap.downcast_ref::<wasi::Exit>() {
+        return Outcome::Exit(exit.0);
+    }
     let message = format!("in {function}: {trap}");
     let out_of_bounds = matches!(trap.to_trap(), Some(TrapCode::HeapAccessOutOfBounds | TrapCode::TableAccessOutOfBounds));
     Outcome::Trap { message, out_of_bounds }
