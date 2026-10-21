@@ -1,0 +1,56 @@
+;; Thin wrappers that store each WASI call's return value at $r, so that tests can check it.
+(module
+  (import "wasi_snapshot_preview1" "args_sizes_get" (func $args_sizes_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "args_get" (func $args_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "environ_sizes_get" (func $environ_sizes_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "environ_get" (func $environ_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "clock_res_get" (func $clock_res_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "clock_time_get" (func $clock_time_get (param i32 i64 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_close" (func $fd_close (param i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_fdstat_get" (func $fd_fdstat_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_prestat_get" (func $fd_prestat_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_prestat_dir_name" (func $fd_prestat_dir_name (param i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_seek" (func $fd_seek (param i32 i64 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "random_get" (func $random_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
+
+  (memory (export "memory") 1)
+
+  (func (export "args_sizes") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $args_sizes_get (local.get 1) (local.get 2))))
+  (func (export "args") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $args_get (local.get 1) (local.get 2))))
+  (func (export "environ_sizes") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $environ_sizes_get (local.get 1) (local.get 2))))
+  (func (export "environ") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $environ_get (local.get 1) (local.get 2))))
+  (func (export "clock_res") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $clock_res_get (local.get 1) (local.get 2))))
+  (func (export "clock_time") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $clock_time_get (local.get 1) (i64.const 0) (local.get 2))))
+  (func (export "close") (param $r i32) (param i32) (i32.store (local.get $r) (call $fd_close (local.get 1))))
+  (func (export "fdstat") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $fd_fdstat_get (local.get 1) (local.get 2))))
+  (func (export "prestat") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $fd_prestat_get (local.get 1) (local.get 2))))
+  (func (export "prestat_dir") (param $r i32) (param i32 i32 i32) (i32.store (local.get $r) (call $fd_prestat_dir_name (local.get 1) (local.get 2) (local.get 3))))
+  (func (export "seek") (param $r i32) (param i32 i32 i32) (i32.store (local.get $r) (call $fd_seek (local.get 1) (i64.const 0) (local.get 2) (local.get 3))))
+  (func (export "random") (param $r i32) (param i32 i32) (i32.store (local.get $r) (call $random_get (local.get 1) (local.get 2))))
+  (func (export "exit") (param i32) (call $proc_exit (local.get 0)))
+
+  ;; Writes one buffer, through a single iovec built at address 64.
+  (func $write_one (param $fd i32) (param $data i32) (param $len i32) (param $iovs i32) (param $nwritten i32) (result i32)
+    (i32.store (i32.const 64) (local.get $data))
+    (i32.store (i32.const 68) (local.get $len))
+    (call $fd_write (local.get $fd) (local.get $iovs) (i32.const 1) (local.get $nwritten)))
+  (func (export "write") (param $r i32) (param $fd i32) (param $data i32) (param $len i32) (param $nwritten i32)
+    (i32.store (local.get $r) (call $write_one (local.get $fd) (local.get $data) (local.get $len) (i32.const 64) (local.get $nwritten))))
+  (func (export "write_bad_iovs") (param $r i32) (param $fd i32) (param $data i32) (param $len i32) (param $nwritten i32)
+    (i32.store (local.get $r) (call $write_one (local.get $fd) (local.get $data) (local.get $len) (i32.const -4) (local.get $nwritten))))
+
+  ;; Branches on a byte of random_get output.
+  (func (export "keygen") (result i32)
+    (drop (call $random_get (i32.const 128) (i32.const 8)))
+    (if (i32.load8_u (i32.const 128)) (then (i32.store (i32.const 136) (i32.const 1))))
+    (i32.const 0))
+
+  ;; Takes a different path depending on the clock.
+  (func (export "clock_dependent") (param $p i32) (result i32)
+    (drop (call $clock_time_get (i32.const 0) (i64.const 0) (i32.const 128)))
+    (if (i64.eq (i64.load (i32.const 128)) (i64.const 1700000000000000000))
+      (then (if (i32.load8_u (local.get $p)) (then (i32.store (i32.const 136) (i32.const 1))))))
+    (i32.const 0))
+)
