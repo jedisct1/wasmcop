@@ -2,6 +2,7 @@ mod support;
 
 use support::*;
 use wasmcop::compile::Backend;
+use wasmcop::report::CellResult;
 use wasmcop_job::{Outcome, Report, Wasi, to_hex};
 use wasmcop_spec::module::ModuleShape;
 use wasmcop_spec::resolve::{Options, resolve};
@@ -14,6 +15,10 @@ fn run_report(wasm: &[u8], script: &str, options: &Options) -> Report {
     let run = run_job(wasm, &default_cell(Backend::Cranelift), job, &dir);
     assert_eq!(run.report.error, None);
     run.report
+}
+
+fn cranelift(wasm: &[u8], script: &str) -> CellResult {
+    clean_cells(wasm, script, &[Backend::Cranelift]).remove(0)
 }
 
 #[test]
@@ -120,4 +125,15 @@ fn wasi_follows_the_spec() {
     assert_eq!(report.iterations[0].outcome, Outcome::Completed);
     assert_eq!(report.iterations[0].expect_failures, Vec::<String>::new());
     assert_eq!(run_report(&fixture("wasi.wat"), "exit(3)", &options()).iterations[0].outcome, Outcome::Exit(3));
+}
+
+#[test]
+fn output_checks() {
+    let print = fixture("print.wat");
+    assert_eq!(classes_in(&cranelift(&print, "data = secret bytes(8)\nprint(data, 8)"), "fd_write"), "check");
+    assert!(cranelift(&print, "data = bytes(8)\nprint(data, 8)").analysis.findings.is_empty());
+
+    // A bad result pointer has to stop fd_write before it looks at the data.
+    let script = "r = out(4)\ndata = secret bytes(8)\nwrite(r, 1, data, 8, 0xfffffff0)\nexpect(r, hex(15000000))";
+    assert!(cranelift(&fixture("wasi.wat"), script).analysis.findings.is_empty());
 }

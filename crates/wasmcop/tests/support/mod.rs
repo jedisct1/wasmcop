@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use wasmcop::check::{Settings, check};
 use wasmcop::compile::{self, Backend, Cell};
-use wasmcop::report::CheckReport;
+use wasmcop::report::{CellResult, CheckReport};
 use wasmcop::valgrind::{Run, Valgrind, find_runner};
 use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType, Wasi};
 use wasmcop_spec::resolve::{Options, TestCase};
@@ -43,6 +43,30 @@ pub fn settings(dir: &TempDir, valgrind: Valgrind, blame: bool) -> Settings {
 pub fn check_with(wasm: &[u8], script: &str, cells: &[Cell], options: &Options, valgrind: Valgrind, blame: bool) -> CheckReport {
     let dir = scratch();
     check(wasm, &[test_case(script)], options, cells, &settings(&dir, valgrind, blame)).unwrap()
+}
+
+pub fn cells_of(wasm: &[u8], script: &str, backends: &[Backend]) -> Vec<CellResult> {
+    check_with(wasm, script, &Cell::defaults(backends), &options(), default_valgrind(), false).tests.remove(0).cells
+}
+
+/// Like `cells_of`, for tests where everything has to run cleanly.
+pub fn clean_cells(wasm: &[u8], script: &str, backends: &[Backend]) -> Vec<CellResult> {
+    assert_clean(cells_of(wasm, script, backends))
+}
+
+pub fn assert_clean(cells: Vec<CellResult>) -> Vec<CellResult> {
+    for cell in &cells {
+        assert_eq!(cell.skipped, None, "{}", cell.cell);
+        assert_eq!(cell.analysis.failures, Vec::<String>::new(), "{}", cell.cell);
+    }
+    cells
+}
+
+pub fn classes_in(cell: &CellResult, function: &str) -> String {
+    let mut names: Vec<&str> = cell.analysis.findings.iter().filter(|f| f.function == function).map(|f| f.class.name()).collect();
+    names.sort();
+    names.dedup();
+    if names.is_empty() { "clean".to_string() } else { names.join(",") }
 }
 
 fn job(iterations: Vec<Iteration>) -> Job {

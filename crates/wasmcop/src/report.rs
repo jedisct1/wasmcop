@@ -172,6 +172,7 @@ fn write_group(out: &mut String, test: &TestResult, key: &GroupKey, findings: &[
         (Place::Native { offset, .. }, Owner::Function(_)) => {
             let _ = write!(out, " +{offset:#x}");
         }
+        (Place::Native { .. }, Owner::Import(_)) => {}
     }
     if let Some(source) = &first.source {
         let _ = write!(out, " ({source})");
@@ -244,6 +245,11 @@ mod tests {
         same_name.owner = Owner::Function(1);
         let text = test_with(Analysis { findings: vec![finding(Class::Branch), same_name], ..Analysis::default() }, None).to_text();
         assert_eq!(text.matches("BRANCH in f").count(), 2, "{text}");
+
+        let import = |name: &str| Finding { owner: Owner::Import(name.to_string()), function: name.to_string(), instruction: None, runtime_function: Some(name.to_string()), ..finding(Class::Check) };
+        let text = test_with(Analysis { findings: vec![import("fd_write"), import("assert_public")], ..Analysis::default() }, None).to_text();
+        assert!(text.contains("CHECK in fd_write") && text.contains("CHECK in assert_public"), "{text}");
+        assert_eq!(text.matches("[cranelift]").count(), 2, "{text}");
 
         let at = |offset| Finding { native_offset: offset, ..finding(Class::Branch) };
         let many: Vec<Finding> = (0..7).map(at).collect();

@@ -13,6 +13,7 @@ use wasmer_types::MetadataHeader;
 #[serde(rename_all = "snake_case")]
 pub enum Owner {
     Function(u32),
+    Import(String),
 }
 
 /// Native offset, length, and offset in the wasm file.

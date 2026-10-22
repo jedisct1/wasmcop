@@ -4,7 +4,7 @@ use crate::source::SourceInfo;
 use crate::xml::{ValgrindError, ValgrindOutput};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use wasmcop_job::{Outcome, Report};
+use wasmcop_job::{BUILTINS, Outcome, Report};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Finding {
@@ -107,7 +107,15 @@ pub fn analyze(output: &ValgrindOutput, code: &CodeMap, report: &Report, source:
 
         // For a problem inside a runtime function, report the generated code that called it.
         let Some((function, offset)) = inner.or_else(|| error.frames.iter().find_map(|f| code.locate(f.ip))) else {
-            analysis.failures.push(format!("Valgrind reported something outside the generated code: {}", describe_host(error)));
+            // Imports run on the host's stack, so Valgrind can't see the wasm code that called them.
+            match import_name(error) {
+                Some(name) => {
+                    let owner = Owner::Import(name.clone());
+                    let finding = merged.entry((class, owner.clone(), 0)).or_insert_with(|| Finding { runtime_function: Some(name.clone()), ..Finding::new(class, owner, name, error) });
+                    finding.occurrences += error.count;
+                }
+                None => analysis.failures.push(format!("Valgrind reported something outside the generated code: {}", describe_host(error))),
+            }
             continue;
         };
 
@@ -144,6 +152,17 @@ pub fn warn_if_vacuous(analysis: &mut Analysis, report: &Report) {
     if quiet && !report.iterations.iter().any(|i| i.output_tainted) {
         analysis.warnings.push("no secret reached any output. Check that the call really uses the secret".to_string());
     }
+}
+
+/// The name of the import the runner was inside, if any.
+fn import_name(error: &ValgrindError) -> Option<String> {
+    const MODULE: &str = "wasmcop_runner::wasi::";
+    let is_import = |name: &&str| BUILTINS.iter().any(|builtin| builtin.name == *name);
+    error.frames.iter().filter_map(|f| f.function.as_deref()).find_map(|text| {
+        let matches = text.match_indices(MODULE).map(|(at, _)| &text[at + MODULE.len()..]);
+        let names = matches.filter_map(|rest| rest.split(|c: char| !(c.is_alphanumeric() || c == '_')).next());
+        names.filter(is_import).last().map(str::to_string)
+    })
 }
 
 /// The two runs only differ in what's poisoned, so errors here can't come from a secret and mean the harness is noisy.
