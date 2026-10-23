@@ -7,7 +7,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{Rng, SeedableRng};
 use std::fmt;
 use std::io::Write;
-use wasmcop_job::{Iteration, Job, Poison, RANDOM_LABEL, WASI_MODULE};
+use wasmcop_job::{Iteration, Job, MODULE_POISON_LABEL, Poison, RANDOM_LABEL, WASI_MODULE, WASMCOP_MODULE};
 use wasmer::{Function, FunctionEnv, FunctionEnvMut, Memory, MemoryView, Store};
 
 const SUCCESS: i32 = 0;
@@ -74,6 +74,17 @@ impl fmt::Display for Exit {
 }
 
 impl std::error::Error for Exit {}
+
+#[derive(Debug)]
+pub struct BadRange;
+
+impl fmt::Display for BadRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a wasmcop function was given a range outside linear memory")
+    }
+}
+
+impl std::error::Error for BadRange {}
 
 fn view<'a>(memory: &'a Option<Memory>, store: &'a impl wasmer::AsStoreRef) -> Option<MemoryView<'a>> {
     memory.as_ref().map(|memory| memory.view(store))
@@ -272,6 +283,41 @@ fn random_get(mut env: FunctionEnvMut<Host>, buffer: i32, length: i32) -> i32 {
     SUCCESS
 }
 
+fn checked_range(env: &mut FunctionEnvMut<Host>, address: i32, length: i32) -> Result<(*const u8, usize), BadRange> {
+    let (host, store) = env.data_and_store_mut();
+    let view = view(&host.memory, &store).ok_or(BadRange)?;
+    let pointer = guest_pointer(&view, address as u32, length as u32).ok_or(BadRange)?;
+    Ok((pointer, length as u32 as usize))
+}
+
+fn poison(mut env: FunctionEnvMut<Host>, address: i32, length: i32) -> Result<(), BadRange> {
+    let (pointer, length) = checked_range(&mut env, address, length)?;
+    if env.data().poison.covers(MODULE_POISON_LABEL) {
+        vg::make_undefined(pointer, length);
+    }
+    Ok(())
+}
+
+fn declassify(mut env: FunctionEnvMut<Host>, address: i32, length: i32) -> Result<(), BadRange> {
+    let (pointer, length) = checked_range(&mut env, address, length)?;
+    vg::make_defined(pointer, length);
+    Ok(())
+}
+
+fn assert_public(mut env: FunctionEnvMut<Host>, address: i32, length: i32) -> Result<(), BadRange> {
+    let (pointer, length) = checked_range(&mut env, address, length)?;
+    vg::check_defined(pointer, length);
+    Ok(())
+}
+
+fn declassify_i32(_env: FunctionEnvMut<Host>, value: i32) -> i32 {
+    vg::defined_value(value)
+}
+
+fn declassify_i64(_env: FunctionEnvMut<Host>, value: i64) -> i64 {
+    vg::defined_value(value)
+}
+
 pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &str) -> Option<Function> {
     macro_rules! typed {
         ($function:ident) => {
@@ -294,6 +340,14 @@ pub fn builtin(store: &mut Store, env: &FunctionEnv<Host>, module: &str, name: &
             "fd_write" => typed!(fd_write),
             "proc_exit" => typed!(proc_exit),
             "random_get" => typed!(random_get),
+            _ => None,
+        },
+        WASMCOP_MODULE => match name {
+            "poison" => typed!(poison),
+            "declassify" => typed!(declassify),
+            "assert_public" => typed!(assert_public),
+            "declassify_i32" => typed!(declassify_i32),
+            "declassify_i64" => typed!(declassify_i64),
             _ => None,
         },
         _ => None,

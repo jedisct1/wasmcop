@@ -151,6 +151,19 @@ fn random_get_output_is_secret_unless_told_otherwise() {
 }
 
 #[test]
+fn the_module_can_mark_and_clear_secrets_itself() {
+    let wasm = fixture("annotated.wat");
+    assert_eq!(cranelift(&wasm, "declassify_part(secret bytes(16, 1))").analysis.findings.len(), 1);
+    assert!(!cranelift(&wasm, "self_poison(bytes(16, 1))").analysis.findings.is_empty());
+    assert_eq!(classes_in(&cranelift(&wasm, "check_public(secret bytes(16, 1))"), "assert_public"), "check");
+    assert!(cranelift(&wasm, "check_public(bytes(16, 1))").analysis.findings.is_empty());
+    assert!(cranelift(&wasm, "scalars(secret bytes(16, 1))").analysis.findings.is_empty());
+
+    let report = run_report(&wasm, "bad_range()", &options());
+    assert!(matches!(&report.iterations[0].outcome, Outcome::Trap { message, .. } if message.contains("outside linear memory")), "{:?}", report.iterations[0].outcome);
+}
+
+#[test]
 fn replays_see_the_same_randomness_and_clock() {
     let wasm = fixture("wasi.wat");
     let backends = [Backend::Cranelift, Backend::Llvm];

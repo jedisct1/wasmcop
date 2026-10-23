@@ -279,6 +279,21 @@ mod tests {
     }
 
     #[test]
+    fn imports_are_named_because_their_callers_are_invisible() {
+        let wrapper = |import: &str| format!("on_stack::wrapper::<func_wrapper<wasmcop_runner::wasi::Host, i32, wasmcop_runner::wasi::BadRange, wasmcop_runner::wasi::{import}>>");
+        let helper = "wasmcop_runner::wasi::guest_pointer";
+        let (write, public) = (wrapper("fd_write"), wrapper("assert_public"));
+        let errors = vec![
+            secret_error("ClientCheck", &[(0x9000, Some(helper)), (0x9100, Some(&write))], 2),
+            secret_error("ClientCheck", &[(0x9000, Some(helper)), (0x9100, Some(&public))], 1),
+        ];
+        let analysis = run(errors, &report_with(Outcome::Completed, true));
+        assert_eq!(analysis.failures, Vec::<String>::new());
+        let found: Vec<_> = analysis.findings.iter().map(|f| (f.class, f.function.as_str(), f.occurrences)).collect();
+        assert_eq!(found, [(Class::Check, "assert_public", 1), (Class::Check, "fd_write", 2)]);
+    }
+
+    #[test]
     fn vacuous_runs_warn() {
         let warnings = |errors, tainted| {
             let report = report_with(Outcome::Completed, tainted);

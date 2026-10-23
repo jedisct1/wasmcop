@@ -9,7 +9,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use turboshake::TurboShake128;
 use turboshake::digest::{ExtendableOutput, Update};
-use wasmcop_job::{self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MemoryBinding, Poison, RANDOM_LABEL, Region, Scalar, SecretRange, Step, ValType, WASI_MODULE, Wasi, builtin};
+use wasmcop_job::{
+    self as job, Alloc, Buffer, Import, ImportKind, Iteration, Job, MODULE_POISON_LABEL, MemoryBinding, Poison, RANDOM_LABEL, Region, Scalar, SecretRange, Step, ValType, WASI_MODULE,
+    WASMCOP_MODULE, Wasi, builtin,
+};
 
 const DEFAULT_ALIGN: u32 = 16;
 
@@ -61,7 +64,7 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
             next_slot: 0,
             next_item: 0,
             // Taken up front, so that a variable with one of these names can't be mistaken for them.
-            label_uses: HashMap::from([(RANDOM_LABEL.to_string(), 1)]),
+            label_uses: HashMap::from([(RANDOM_LABEL.to_string(), 1), (MODULE_POISON_LABEL.to_string(), 1)]),
             poisoned: HashMap::new(),
             secrets: &mut secrets,
         };
@@ -79,6 +82,9 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
     let is_builtin = |module: &str, name: &str| imports.iter().any(|i| i.module == module && i.name == name && matches!(i.kind, ImportKind::Builtin));
     if options.secret_random && is_builtin(WASI_MODULE, "random_get") {
         secrets.insert(RANDOM_LABEL.to_string());
+    }
+    if is_builtin(WASMCOP_MODULE, "poison") {
+        secrets.insert(MODULE_POISON_LABEL.to_string());
     }
     let job = Job {
         artifact: PathBuf::new(),
@@ -128,6 +134,7 @@ fn imports(shape: &ModuleShape, options: &Options) -> Result<Vec<Import>> {
                             ImportKind::Builtin
                         }
                         None if import.module == WASI_MODULE => ImportKind::Trap { params, results },
+                        None if import.module == WASMCOP_MODULE => bail!("unknown function {qualified}"),
                         None => {
                             missing.push(qualified);
                             continue;
@@ -815,5 +822,7 @@ mod tests {
 
         let random = r#"(module (import "wasi_snapshot_preview1" "random_get" (func (param i32 i32) (result i32))) (memory (export "m") 1))"#;
         assert_eq!(labels("random_get = secret bytes(4)", random), ["random_get", "random_get#2"]);
+        let poisons = r#"(module (import "wasmcop" "poison" (func (param i32 i32))) (memory (export "m") 1))"#;
+        assert_eq!(labels("wasmcop.poison = secret bytes(4)", poisons), ["wasmcop.poison", "wasmcop.poison#2"]);
     }
 }

@@ -6,7 +6,11 @@ use std::path::PathBuf;
 /// `random_get` output counts as one secret, under this name.
 pub const RANDOM_LABEL: &str = "random_get";
 
+/// Whatever a module poisons itself counts as one secret, under this name.
+pub const MODULE_POISON_LABEL: &str = "wasmcop.poison";
+
 pub const WASI_MODULE: &str = "wasi_snapshot_preview1";
+pub const WASMCOP_MODULE: &str = "wasmcop";
 
 /// A function the runner provides itself.
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +22,10 @@ pub struct Builtin {
 
 const fn wasi(name: &'static str, needs_memory: bool) -> Builtin {
     Builtin { module: WASI_MODULE, name, needs_memory }
+}
+
+const fn wasmcop(name: &'static str, needs_memory: bool) -> Builtin {
+    Builtin { module: WASMCOP_MODULE, name, needs_memory }
 }
 
 pub const BUILTINS: &[Builtin] = &[
@@ -35,6 +43,11 @@ pub const BUILTINS: &[Builtin] = &[
     wasi("fd_write", true),
     wasi("proc_exit", false),
     wasi("random_get", true),
+    wasmcop("poison", true),
+    wasmcop("declassify", true),
+    wasmcop("assert_public", true),
+    wasmcop("declassify_i32", false),
+    wasmcop("declassify_i64", false),
 ];
 
 pub fn builtin(module: &str, name: &str) -> Option<&'static Builtin> {
