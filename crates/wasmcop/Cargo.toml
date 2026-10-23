@@ -24,3 +24,7 @@ iced-x86 = { version = "1.22.0", default-features = false, features = ["std", "d
 serde.workspace = true
 tempfile = "3.27.0"
 wasmcop-spec.workspace = true
+
+[dev-dependencies]
+rand_chacha = "0.10"
+rand_core = "0.10.1"
