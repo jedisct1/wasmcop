@@ -79,6 +79,7 @@ fn job(iterations: Vec<Iteration>) -> Job {
         imports: Vec::new(),
         wasi: Wasi::default(),
         secret_random: true,
+        init: Vec::new(),
         iterations,
     }
 }

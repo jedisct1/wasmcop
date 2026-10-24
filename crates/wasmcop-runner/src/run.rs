@@ -81,6 +81,13 @@ fn run_iteration(
         output_tainted: false,
         expect_failures: Vec::new(),
     };
+    for init in &job.init {
+        let function = instance.exports.get_function(init)?;
+        if let Err(trap) = function.call(store, &[]) {
+            report.outcome = failure_outcome(init, trap);
+            return Ok(report);
+        }
+    }
     state.prepare_arena(store, iteration)?;
 
     for step in &iteration.steps {

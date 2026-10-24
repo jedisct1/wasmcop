@@ -78,6 +78,8 @@ pub struct Job {
     pub imports: Vec<Import>,
     pub wasi: Wasi,
     pub secret_random: bool,
+    /// Called in order after instantiation, like `_initialize`.
+    pub init: Vec<String>,
     pub iterations: Vec<Iteration>,
 }
 

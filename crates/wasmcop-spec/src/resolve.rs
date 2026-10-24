@@ -95,6 +95,7 @@ pub fn resolve(test: &TestCase, shape: &ModuleShape, options: &Options) -> Resul
         imports,
         wasi: options.wasi.clone(),
         secret_random: options.secret_random,
+        init: init_functions(shape),
         iterations,
     };
     Ok(Resolved { job, secrets })
@@ -107,6 +108,15 @@ fn default_alloc(shape: &ModuleShape) -> Alloc {
     } else {
         Alloc::Grow
     }
+}
+
+fn init_functions(shape: &ModuleShape) -> Vec<String> {
+    ["_initialize", "__wasm_call_ctors"]
+        .into_iter()
+        .find(|name| shape.functions.get(*name) == Some(&Signature::default()))
+        .map(str::to_string)
+        .into_iter()
+        .collect()
 }
 
 fn imports(shape: &ModuleShape, options: &Options) -> Result<Vec<Import>> {
