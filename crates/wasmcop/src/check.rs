@@ -3,9 +3,10 @@ use crate::code::ArtifactCode;
 use crate::compile::{self, Cell};
 use crate::report::{CellResult, CheckReport, TestResult, cell_labels};
 use crate::source::SourceInfo;
+use crate::start::defer_start;
 use crate::valgrind::{self, Run, Valgrind};
 use crate::xml::{self, ValgrindOutput};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -86,7 +87,7 @@ fn unique(cells: &[Cell]) -> Vec<Cell> {
 }
 
 /// Compiled artifacts are kept between runs, since LLVM in particular is slow.
-pub fn compile_cell(wasm: &[u8], cell: &Cell) -> Result<Build> {
+pub fn compile_cell(wasm: &[u8], cell: &Cell, offset_shift: i64) -> Result<Build> {
     if !cell.backend.available() {
         return Ok(Err(format!("this build of wasmcop has no {} backend", cell.backend)));
     }
@@ -99,7 +100,7 @@ pub fn compile_cell(wasm: &[u8], cell: &Cell) -> Result<Build> {
         }
     }
     let artifact = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    let code = ArtifactCode::parse(&artifact).with_context(|| format!("reading {}", path.display()))?;
+    let code = ArtifactCode::parse(&artifact, offset_shift).with_context(|| format!("reading {}", path.display()))?;
     Ok(Ok(Compiled { path, code }))
 }
 
@@ -156,14 +157,18 @@ fn analyze_run(run: &Run, compiled: &Compiled, module: &Module) -> Result<Analys
 
 /// Runs every test on every cell, and a second time with no secrets to prove the harness itself is quiet.
 pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell], settings: &Settings) -> Result<CheckReport> {
+    // Has to happen first, since deferring the start function could hide a mistake in it.
+    compile::validate(wasm).map_err(|e| anyhow!("this is not a valid module: {e}"))?;
     let shape = ModuleShape::parse(wasm)?;
     let source = SourceInfo::new(wasm);
     let module = Module { shape: &shape, source: &source };
+    let prepared = defer_start(wasm)?;
 
     let resolved = tests
         .iter()
         .map(|test| {
-            let resolved = resolve(test, &shape, options)?;
+            let mut resolved = resolve(test, &shape, options)?;
+            resolved.job.init.splice(0..0, prepared.start_export.clone());
             Ok(resolved)
         })
         .collect::<Result<Vec<Resolved>>>()?;
@@ -171,7 +176,7 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
     // Read once here, rather than once per worker.
     build_fingerprint()?;
     let cells = unique(cells);
-    let builds = parallel_map(&cells, settings.jobs, |cell| compile_cell(wasm, cell))?;
+    let builds = parallel_map(&cells, settings.jobs, |cell| compile_cell(&prepared.wasm, cell, prepared.offset_shift))?;
     let labels = cell_labels(&cells);
 
     // One queue for everything, so the number of cells doesn't limit how many runs happen at once.

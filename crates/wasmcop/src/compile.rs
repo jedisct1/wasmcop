@@ -186,6 +186,12 @@ fn engine(cell: &Cell) -> Result<Engine, String> {
     Ok(builder.set_target(Some(cell.cpu.target())).into())
 }
 
+/// Checks that a module is valid wasm, under the same rules the compilers use.
+pub fn validate(wasm: &[u8]) -> Result<(), String> {
+    let engine: Engine = EngineBuilder::new(Cranelift::default()).into();
+    Module::validate(&engine, wasm).map_err(|e| e.to_string())
+}
+
 /// Never targets the host CPU, because Valgrind refuses code that needs features it can't emulate, like AVX-512.
 ///
 /// Wasmer panics on some things it doesn't implement, so a panic counts as a normal compile failure.

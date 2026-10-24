@@ -5,6 +5,7 @@ pub mod code;
 pub mod compile;
 pub mod report;
 pub mod source;
+pub mod start;
 pub mod valgrind;
 pub mod xml;
 

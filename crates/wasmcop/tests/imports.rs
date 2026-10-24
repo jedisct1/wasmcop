@@ -164,6 +164,28 @@ fn the_module_can_mark_and_clear_secrets_itself() {
 }
 
 #[test]
+fn the_start_function_runs_with_memory_available() {
+    for cell in clean_cells(&fixture("start.wat"), "uses_key()", &[Backend::Cranelift, Backend::Llvm]) {
+        assert_eq!(classes_in(&cell, "uses_key"), "branch", "{}: the key from the start function should be secret", cell.cell);
+        if cell.cell == "cranelift" {
+            // The start section is removed before compiling, and offsets still have to match the original file.
+            assert_eq!(cell.analysis.findings[0].operator.as_deref(), Some("if"));
+        }
+    }
+
+    let exits = wat::parse_str(
+        r#"(module
+             (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+             (func $start (call $exit (i32.const 3)))
+             (func (export "f"))
+             (start $start))"#,
+    )
+    .unwrap();
+    let cells = cells_of(&exits, "f()", &[Backend::Cranelift]);
+    assert!(cells[0].analysis.failures.iter().any(|f| f.contains("exited with status 3")), "{:?}", cells[0].analysis);
+}
+
+#[test]
 fn replays_see_the_same_randomness_and_clock() {
     let wasm = fixture("wasi.wat");
     let backends = [Backend::Cranelift, Backend::Llvm];

@@ -72,7 +72,8 @@ fn function_name(shape: &ModuleShape, wasm_index: u32) -> String {
 }
 
 impl ArtifactCode {
-    pub fn parse(artifact: &[u8]) -> Result<ArtifactCode> {
+    /// `offset_shift` turns offsets in the compiled module into offsets in the original file.
+    pub fn parse(artifact: &[u8], offset_shift: i64) -> Result<ArtifactCode> {
         // The format needs 16-byte alignment, which a plain Vec<u8> doesn't promise.
         let mut aligned = vec![0u128; artifact.len().div_ceil(16)];
         let bytes = &mut as_bytes(&mut aligned)[..artifact.len()];
@@ -99,7 +100,7 @@ impl ArtifactCode {
                     .instructions
                     .iter()
                     .filter(|entry| !entry.srcloc.is_default())
-                    .map(|entry| (entry.code_offset as u32, entry.code_len as u32, entry.srcloc.bits()))
+                    .map(|entry| (entry.code_offset as u32, entry.code_len as u32, (i64::from(entry.srcloc.bits()) + offset_shift) as u32))
                     .collect(),
             })
             .collect();
