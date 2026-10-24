@@ -271,6 +271,9 @@ mod tests {
         strange.what = "source and destination overlap".to_string();
         let text = test_with(Analysis { findings: vec![strange], ..Analysis::default() }, None).to_text();
         assert!(text.contains("Overlap: source and destination overlap"), "{text}");
+
+        let text = test_with(Analysis { findings: vec![finding(Class::IncompleteOrAddress)], ..Analysis::default() }, None).to_text();
+        assert!(text.contains("either the address or the count was secret"), "{text}");
     }
 
     #[test]

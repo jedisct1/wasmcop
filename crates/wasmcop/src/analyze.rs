@@ -141,6 +141,11 @@ pub fn analyze(output: &ValgrindOutput, code: &CodeMap, report: &Report, source:
     }
 
     analysis.findings = merged.into_values().collect();
+    for finding in &analysis.findings {
+        if finding.class.is_incomplete() {
+            analysis.failures.push(format!("the analysis of {} is incomplete: {}", finding.function, finding.class.explanation().unwrap_or_default()));
+        }
+    }
     analysis.failures.sort();
     analysis.failures.dedup();
     analysis
