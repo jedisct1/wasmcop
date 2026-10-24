@@ -18,6 +18,8 @@ pub struct Run {
 pub struct Valgrind {
     pub path: PathBuf,
     pub version: String,
+    /// Has the variable-latency patch.
+    pub patched: bool,
 }
 
 impl Valgrind {
@@ -31,7 +33,12 @@ impl Valgrind {
             bail!("{} --version failed", path.display());
         }
         let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(Valgrind { path, version })
+        let help = Command::new(&path)
+            .args(["--tool=memcheck", "--help"])
+            .output()
+            .with_context(|| format!("running {}", path.display()))?;
+        let patched = String::from_utf8_lossy(&help.stdout).contains("--variable-latency-errors");
+        Ok(Valgrind { path, version, patched })
     }
 
     pub fn run(&self, runner: &Path, mut job: Job, dir: &Path) -> Result<Run> {
@@ -72,6 +79,9 @@ impl Valgrind {
         ]);
         command.arg(format!("--xml-file={}", xml.display()));
         command.arg(format!("--suppressions={}", suppressions.display()));
+        if self.patched {
+            command.arg("--variable-latency-errors=yes");
+        }
         command.arg(runner).arg(job);
         command
     }
