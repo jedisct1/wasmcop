@@ -23,8 +23,13 @@ pub struct Valgrind {
 }
 
 impl Valgrind {
+    /// An explicit path wins, then the build from `scripts/build-valgrind.sh`, then `PATH`.
     pub fn find(explicit: Option<&Path>) -> Result<Valgrind> {
-        let path = explicit.map_or_else(|| PathBuf::from("valgrind"), Path::to_path_buf);
+        let cached = cached_valgrind().filter(|path| path.exists());
+        let path = match explicit {
+            Some(path) => path.to_path_buf(),
+            None => cached.unwrap_or_else(|| PathBuf::from("valgrind")),
+        };
         let output = Command::new(&path)
             .arg("--version")
             .output()
@@ -85,6 +90,10 @@ impl Valgrind {
         command.arg(runner).arg(job);
         command
     }
+}
+
+pub fn cached_valgrind() -> Option<PathBuf> {
+    Some(cache_dir()?.join("valgrind/bin/valgrind"))
 }
 
 pub fn cache_dir() -> Option<PathBuf> {
