@@ -3,6 +3,7 @@ pub mod check;
 pub mod classify;
 pub mod code;
 pub mod compile;
+pub mod doctor;
 pub mod report;
 pub mod source;
 pub mod start;

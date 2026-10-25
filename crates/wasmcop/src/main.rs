@@ -63,6 +63,11 @@ enum Command {
     Check(CheckArgs),
     /// Show a module's functions and what it needs
     List { module: PathBuf },
+    /// Check that everything Wasmcop needs is installed
+    Doctor {
+        #[arg(long)]
+        valgrind: Option<PathBuf>,
+    },
 }
 
 fn list(path: &Path) -> Result<()> {
@@ -145,6 +150,11 @@ fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Check(args) => run_check(&args),
         Command::List { module } => list(&module).map(|()| ExitCode::SUCCESS),
+        Command::Doctor { valgrind } => {
+            let (report, usable) = wasmcop::doctor::doctor(valgrind.as_deref());
+            print!("{report}");
+            Ok(if usable { ExitCode::SUCCESS } else { ExitCode::from(2) })
+        }
     };
     result.unwrap_or_else(|e| {
         eprintln!("wasmcop: {e:#}");
