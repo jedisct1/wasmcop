@@ -107,6 +107,15 @@ pub fn classify(kind: &str, _what: &str, in_host: bool, instruction: Option<&Ins
     }
 }
 
+/// Instructions whose speed can depend on their operands.
+pub fn is_variable_time(mnemonic: Mnemonic) -> bool {
+    use Mnemonic::*;
+    matches!(
+        mnemonic,
+        Div | Idiv | Divss | Divsd | Divps | Divpd | Sqrtss | Sqrtsd | Sqrtps | Sqrtpd | Vdivss | Vdivsd | Vdivps | Vdivpd | Vsqrtss | Vsqrtsd | Vsqrtps | Vsqrtpd
+    )
+}
+
 fn is_simd_shift_by_scalar(instruction: &Instruction) -> bool {
     use Mnemonic::*;
     let shift = matches!(
@@ -128,6 +137,36 @@ mod tests {
         let instruction = Decoder::new(64, bytes, DecoderOptions::NONE).decode();
         assert!(!instruction.is_invalid(), "{bytes:02x?}");
         instruction
+    }
+
+    #[test]
+    fn scan_recognizes_variable_time_instructions() {
+        let variable_time: [&[u8]; 18] = [
+            &[0xf7, 0xf1],
+            &[0xf7, 0xf9],
+            &[0xf3, 0x0f, 0x5e, 0xc1],
+            &[0xf2, 0x0f, 0x5e, 0xc1],
+            &[0x0f, 0x5e, 0xc1],
+            &[0x66, 0x0f, 0x5e, 0xc1],
+            &[0xf3, 0x0f, 0x51, 0xc1],
+            &[0xf2, 0x0f, 0x51, 0xc1],
+            &[0x0f, 0x51, 0xc1],
+            &[0x66, 0x0f, 0x51, 0xc1],
+            &[0xc5, 0xf2, 0x5e, 0xc2],
+            &[0xc5, 0xf3, 0x5e, 0xc2],
+            &[0xc5, 0xf0, 0x5e, 0xc2],
+            &[0xc5, 0xf1, 0x5e, 0xc2],
+            &[0xc5, 0xf2, 0x51, 0xc2],
+            &[0xc5, 0xf3, 0x51, 0xc2],
+            &[0xc5, 0xf8, 0x51, 0xc1],
+            &[0xc5, 0xf9, 0x51, 0xc1],
+        ];
+        for bytes in variable_time {
+            assert!(is_variable_time(decode(bytes).mnemonic()), "{bytes:02x?}");
+        }
+        for bytes in [&[0xf2, 0x0f, 0x59, 0xc1][..], &[0x01, 0xc8], &[0xf7, 0xe1]] {
+            assert!(!is_variable_time(decode(bytes).mnemonic()), "{bytes:02x?}");
+        }
     }
 
     #[test]

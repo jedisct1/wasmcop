@@ -1,3 +1,4 @@
+use crate::classify::is_variable_time;
 use anyhow::{Context, Result, anyhow, bail};
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter};
 use serde::Serialize;
@@ -14,6 +15,15 @@ use wasmer_types::MetadataHeader;
 pub enum Owner {
     Function(u32),
     Import(String),
+}
+
+/// A variable-time instruction that nobody checked.
+#[derive(Debug, Clone, Serialize)]
+pub struct UncheckedSite {
+    pub owner: Owner,
+    pub function: String,
+    pub native_offset: u64,
+    pub instruction: String,
 }
 
 /// Native offset, length, and offset in the wasm file.
@@ -123,6 +133,23 @@ impl ArtifactCode {
             });
         }
         Ok(CodeMap { functions })
+    }
+
+    /// Every instruction whose speed can depend on its operands.
+    pub fn variable_time_sites(&self, shape: &ModuleShape) -> Vec<UncheckedSite> {
+        let mut sites = Vec::new();
+        for (index, function) in self.functions.iter().enumerate() {
+            let wasm_index = index as u32 + shape.imported_functions;
+            let mut decoder = Decoder::with_ip(64, &function.body, 0, DecoderOptions::NONE);
+            while decoder.can_decode() {
+                let native_offset = decoder.ip();
+                let instruction = decoder.decode();
+                if is_variable_time(instruction.mnemonic()) {
+                    sites.push(UncheckedSite { owner: Owner::Function(wasm_index), function: function_name(shape, wasm_index), native_offset, instruction: format_instruction(&instruction) });
+                }
+            }
+        }
+        sites
     }
 }
 

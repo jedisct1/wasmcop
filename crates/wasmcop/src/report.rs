@@ -1,6 +1,6 @@
 use crate::analyze::{Analysis, Finding};
 use crate::classify::Class;
-use crate::code::Owner;
+use crate::code::{Owner, UncheckedSite};
 use crate::compile::Cell;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,6 +11,8 @@ pub struct CellResult {
     pub cell: String,
     pub skipped: Option<String>,
     pub analysis: Analysis,
+    /// Without the Valgrind patch, the variable-time instructions nobody checked.
+    pub unchecked: Vec<UncheckedSite>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -21,6 +23,7 @@ pub struct TestResult {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckReport {
+    pub variable_time_checked: bool,
     /// Whether `--blame` was used, so that `Finding::reached_from` means something.
     pub blamed: bool,
     pub tests: Vec<TestResult>,
@@ -51,6 +54,12 @@ impl CheckReport {
         let mut out = String::new();
         for test in &self.tests {
             write_test(&mut out, test, self.blamed);
+        }
+        if let Some(test) = self.tests.first() {
+            write_unchecked(&mut out, test);
+        }
+        if !self.variable_time_checked {
+            out.push_str("Note: variable-time instructions such as division were not checked. Run scripts/build-valgrind.sh to enable that.\n");
         }
         out
     }
@@ -84,6 +93,22 @@ fn write_test(out: &mut String, test: &TestResult, blamed: bool) {
         }
     }
     write_findings(out, test, blamed);
+    out.push('\n');
+}
+
+/// These come from the whole module, so they're the same for every test.
+fn write_unchecked(out: &mut String, test: &TestResult) {
+    if test.cells.iter().all(|c| c.unchecked.is_empty()) {
+        return;
+    }
+    let _ = writeln!(out, "Not checked, since this Valgrind can't see them:");
+    for cell in &test.cells {
+        let ambiguous = ambiguous_names(cell.unchecked.iter().map(|s| (s.function.as_str(), &s.owner)));
+        for site in &cell.unchecked {
+            let name = display_name(&site.function, &site.owner, &ambiguous);
+            let _ = writeln!(out, "  {}: {} in {name} +{:#x}", cell.cell, site.instruction, site.native_offset);
+        }
+    }
     out.push('\n');
 }
 
@@ -227,10 +252,11 @@ mod tests {
 
     fn test_with(analysis: Analysis, skipped: Option<&str>) -> CheckReport {
         CheckReport {
+            variable_time_checked: true,
             blamed: false,
             tests: vec![TestResult {
                 name: "t".to_string(),
-                cells: vec![CellResult { cell: "cranelift".to_string(), skipped: skipped.map(str::to_string), analysis }],
+                cells: vec![CellResult { cell: "cranelift".to_string(), skipped: skipped.map(str::to_string), analysis, unchecked: Vec::new() }],
             }],
         }
     }
@@ -274,6 +300,16 @@ mod tests {
 
         let text = test_with(Analysis { findings: vec![finding(Class::IncompleteOrAddress)], ..Analysis::default() }, None).to_text();
         assert!(text.contains("either the address or the count was secret"), "{text}");
+
+        let site = UncheckedSite { owner: Owner::Function(1), function: "f".to_string(), native_offset: 8, instruction: "div ecx".to_string() };
+        let mut report = test_with(Analysis::default(), None);
+        report.tests[0].cells[0].unchecked.push(site.clone());
+        report.tests.push(report.tests[0].clone());
+        assert_eq!(report.to_text().matches("div ecx").count(), 1);
+        assert!(report.to_text().contains("in f +0x8"));
+
+        report.tests[0].cells[0].unchecked.push(UncheckedSite { owner: Owner::Function(2), ..site });
+        assert!(report.to_text().contains("in f[2] +0x8"));
     }
 
     #[test]
@@ -287,7 +323,7 @@ mod tests {
         assert_eq!(test_with(clean, Some("no")).exit_code(), EXIT_FAILED);
 
         let mut both = test_with(findings, None);
-        both.tests[0].cells.push(CellResult { cell: "llvm".to_string(), skipped: None, analysis: failed });
+        both.tests[0].cells.push(CellResult { cell: "llvm".to_string(), skipped: None, analysis: failed, unchecked: Vec::new() });
         assert_eq!(both.exit_code(), EXIT_FAILED);
     }
 }

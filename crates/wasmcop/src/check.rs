@@ -1,5 +1,5 @@
 use crate::analyze::{self, Analysis};
-use crate::code::ArtifactCode;
+use crate::code::{ArtifactCode, UncheckedSite};
 use crate::compile::{self, Cell};
 use crate::report::{CellResult, CheckReport, TestResult, cell_labels};
 use crate::source::SourceInfo;
@@ -178,6 +178,13 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
     let cells = unique(cells);
     let builds = parallel_map(&cells, settings.jobs, |cell| compile_cell(&prepared.wasm, cell, prepared.offset_shift))?;
     let labels = cell_labels(&cells);
+    let unchecked: Vec<Vec<UncheckedSite>> = builds
+        .iter()
+        .map(|build| match build {
+            Ok(compiled) if !settings.valgrind.patched => compiled.code.variable_time_sites(&shape),
+            _ => Vec::new(),
+        })
+        .collect();
 
     // One queue for everything, so the number of cells doesn't limit how many runs happen at once.
     let mut work = Vec::new();
@@ -195,7 +202,7 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
     let mut results = Vec::new();
     for (test, resolved) in tests.iter().zip(&resolved) {
         let mut cell_results = Vec::new();
-        for (build, label) in builds.iter().zip(&labels) {
+        for ((build, label), unchecked) in builds.iter().zip(&labels).zip(&unchecked) {
             let (skipped, analysis) = match build {
                 Err(reason) => (Some(reason.clone()), Analysis::default()),
                 Ok(compiled) => {
@@ -208,7 +215,7 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
                     (None, analysis)
                 }
             };
-            cell_results.push(CellResult { cell: label.clone(), skipped, analysis });
+            cell_results.push(CellResult { cell: label.clone(), skipped, analysis, unchecked: unchecked.clone() });
         }
         results.push(TestResult { name: test.name.clone(), cells: cell_results });
     }
@@ -216,7 +223,7 @@ pub fn check(wasm: &[u8], tests: &[TestCase], options: &Options, cells: &[Cell],
     if settings.blame {
         blame(&mut results, &resolved, &cells, &builds, &module, settings)?;
     }
-    Ok(CheckReport { blamed: settings.blame, tests: results })
+    Ok(CheckReport { variable_time_checked: settings.valgrind.patched, blamed: settings.blame, tests: results })
 }
 
 /// Re-runs each cell that has findings with one secret poisoned at a time, and credits each secret with what it causes.
