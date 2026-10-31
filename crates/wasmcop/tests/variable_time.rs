@@ -45,3 +45,61 @@ fn division_on_stock_and_patched_valgrind() {
         }
     }
 }
+
+#[test]
+fn floating_point_division_and_square_root() {
+    let Some(valgrind) = patched_valgrind() else { return };
+    let scalar = ["f32_div", "f64_div", "f32_sqrt", "f64_sqrt"];
+    let vector = ["f32x4_div", "f64x2_div", "f32x4_sqrt", "f64x2_sqrt"];
+    let script = |names: &[&str], arg: &str| names.iter().map(|name| format!("{name}({arg})\n")).collect::<String>();
+    let secret = "secret bytes(32, 0x40)";
+    let public = "bytes(32, 0x40)";
+
+    for (fixture_name, names, backends) in [("float.wat", &scalar, &Backend::ALL[..]), ("simd.wat", &vector, &[Backend::Cranelift, Backend::Llvm][..])] {
+        let wasm = fixture(fixture_name);
+        for cell in run(&valgrind, &wasm, &script(names, secret), backends) {
+            assert_eq!(variable_time_functions(&cell), names.iter().copied().collect(), "{}", cell.cell);
+        }
+        for cell in run(&valgrind, &wasm, &script(names, public), backends) {
+            assert!(cell.analysis.findings.is_empty(), "{}: public operands are fine", cell.cell);
+        }
+        for cell in run(&stock_valgrind(), &wasm, &script(names, secret), backends) {
+            assert!(cell.analysis.findings.is_empty(), "{}: stock Valgrind can't see these", cell.cell);
+            for name in names {
+                assert!(cell.unchecked.iter().any(|s| s.function == *name), "{}: {name} should be listed", cell.cell);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_secret_address_and_a_secret_operand_are_both_reported() {
+    let Some(valgrind) = patched_valgrind() else { return };
+    let cells = run(&valgrind, &fixture("float.wat"), "div_secret_address(secret bytes(32, 0x40))", &Backend::ALL);
+
+    // Needs a backend that folds the load into the division, so that both land on one instruction.
+    let both_on_one_instruction = |cell: &CellResult| {
+        let findings = &cell.analysis.findings;
+        findings.iter().filter(|f| f.class == Class::MemoryAddress).any(|address| findings.iter().any(|f| f.class == Class::VariableTime && f.owner == address.owner && f.native_offset == address.native_offset))
+    };
+    assert!(cells.iter().any(both_on_one_instruction), "{cells:#?}");
+}
+
+#[test]
+fn scalar_operations_only_care_about_the_low_lane() {
+    let Some(valgrind) = patched_valgrind() else { return };
+    let wasm = fixture("simd.wat");
+    let backends = [Backend::Cranelift, Backend::Llvm];
+    let script = |range: &[(&str, &str)]| -> String { range.iter().map(|(name, secret)| format!("{name}(bytes(16, 0x40, secret={secret}))\n")).collect() };
+
+    let upper_lanes = [("f64_div_lane", "8..16"), ("f32_div_lane", "4..16"), ("f64_sqrt_lane", "8..16"), ("f32_sqrt_lane", "4..16")];
+    for cell in run(&valgrind, &wasm, &script(&upper_lanes), &backends) {
+        assert!(variable_time_functions(&cell).is_empty(), "{}: {:?}", cell.cell, cell.analysis.findings);
+    }
+
+    let low_lane = [("f64_div_lane", "0..8"), ("f32_div_lane", "0..4"), ("f64_sqrt_lane", "0..8"), ("f32_sqrt_lane", "0..4")];
+    let names: BTreeSet<&str> = low_lane.iter().map(|(name, _)| *name).collect();
+    for cell in run(&valgrind, &wasm, &script(&low_lane), &backends) {
+        assert_eq!(variable_time_functions(&cell), names, "{}", cell.cell);
+    }
+}
