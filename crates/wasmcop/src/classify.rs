@@ -8,6 +8,7 @@ pub enum Class {
     MemoryAddress,
     JumpTarget,
     ControlTransfer,
+    VariableTime,
     Libcall,
     Check,
     Syscall,
@@ -17,11 +18,12 @@ pub enum Class {
 }
 
 impl Class {
-    pub const ALL: [Class; 10] = [
+    pub const ALL: [Class; 11] = [
         Class::Branch,
         Class::MemoryAddress,
         Class::JumpTarget,
         Class::ControlTransfer,
+        Class::VariableTime,
         Class::Libcall,
         Class::Check,
         Class::Syscall,
@@ -36,6 +38,7 @@ impl Class {
             Class::MemoryAddress => "memory-address",
             Class::JumpTarget => "jump-target",
             Class::ControlTransfer => "control-transfer",
+            Class::VariableTime => "variable-time",
             Class::Libcall => "libcall",
             Class::Check => "check",
             Class::Syscall => "syscall",
@@ -74,8 +77,11 @@ pub enum Disposition {
 }
 
 /// The rules apply in order and the first match wins, because the categories overlap: a `div` can have a memory operand, and so can an indirect jump.
-pub fn classify(kind: &str, _what: &str, in_host: bool, instruction: Option<&Instruction>) -> Disposition {
+pub fn classify(kind: &str, what: &str, in_host: bool, instruction: Option<&Instruction>) -> Disposition {
     use Disposition::*;
+    if what.contains("Variable-latency") {
+        return Finding(Class::VariableTime);
+    }
     match kind {
         "ClientCheck" => return Finding(Class::Check),
         "SyscallParam" => return Finding(Class::Syscall),
@@ -169,6 +175,8 @@ mod tests {
         }
     }
 
+    const LATENCY: &str = "Variable-latency instruction operand of size 8 is secret/uninitialised";
+
     #[test]
     fn rules_apply_in_order() {
         let je = decode(&[0x74, 0x05]);
@@ -179,6 +187,7 @@ mod tests {
         let call_mem = decode(&[0xff, 0x14, 0xc5, 0, 0, 0, 0]);
         let load = decode(&[0x8b, 0x04, 0x07]);
         let div_mem = decode(&[0xf7, 0x30]);
+        let div_reg = decode(&[0xf7, 0xf1]);
         let pslld_reg = decode(&[0x66, 0x0f, 0xf2, 0xc1]);
         let pslld_mem = decode(&[0x66, 0x0f, 0xf2, 0x00]);
         let vpslld_reg = decode(&[0xc5, 0xf1, 0xf2, 0xc2]);
@@ -188,6 +197,8 @@ mod tests {
         use Class::*;
         use Disposition::*;
         for (kind, what, in_host, instruction, expected) in [
+            ("UninitValue", LATENCY, false, Some(&div_mem), Finding(VariableTime)),
+            ("UninitValue", LATENCY, false, Some(&div_reg), Finding(VariableTime)),
             ("ClientCheck", "", true, None, Finding(Check)),
             ("SyscallParam", "", true, None, Finding(Syscall)),
             ("InvalidRead", "", false, Some(&load), GuardPage),

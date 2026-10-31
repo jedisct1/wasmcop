@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use wasmcop::check::{Settings, check};
 use wasmcop::compile::{self, Backend, Cell};
 use wasmcop::report::{CellResult, CheckReport};
-use wasmcop::valgrind::{Run, Valgrind, find_runner};
+use wasmcop::valgrind::{Run, Valgrind, cached_valgrind, find_runner};
 use wasmcop_job::{Alloc, Arg, Buffer, Iteration, Job, MemoryBinding, Poison, Scalar, SecretRange, Step, ValType, Wasi};
 use wasmcop_spec::resolve::{Options, TestCase};
 use wasmcop_spec::syntax::parse_script;
@@ -34,6 +34,23 @@ pub fn test_case(script: &str) -> TestCase {
 
 pub fn default_valgrind() -> Valgrind {
     Valgrind::find(None).unwrap()
+}
+
+pub fn stock_valgrind() -> Valgrind {
+    let valgrind = Valgrind::find(Some(Path::new("valgrind"))).unwrap();
+    assert!(!valgrind.patched, "these tests expect the valgrind on PATH to be unpatched");
+    valgrind
+}
+
+/// `None` when scripts/build-valgrind.sh hasn't been run.
+pub fn patched_valgrind() -> Option<Valgrind> {
+    let path = cached_valgrind().filter(|path| path.exists());
+    if path.is_none() {
+        eprintln!("skipping: run scripts/build-valgrind.sh to test the patched Valgrind");
+    }
+    let valgrind = Valgrind::find(Some(&path?)).unwrap();
+    assert!(valgrind.patched);
+    Some(valgrind)
 }
 
 pub fn settings(dir: &TempDir, valgrind: Valgrind, blame: bool) -> Settings {
