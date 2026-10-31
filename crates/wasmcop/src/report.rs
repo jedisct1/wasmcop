@@ -210,6 +210,9 @@ fn write_group(out: &mut String, test: &TestResult, key: &GroupKey, findings: &[
     if key.class == Class::Unclassified {
         let _ = writeln!(out, "    {}: {}", first.kind, first.what);
     }
+    if first.compiler_introduced {
+        let _ = writeln!(out, "    added by the compiler: the wasm here is `{}`", first.operator.as_deref().unwrap_or("?"));
+    }
     for (cell, finding) in findings {
         match (&finding.instruction, &finding.runtime_function) {
             (Some(instruction), _) => {

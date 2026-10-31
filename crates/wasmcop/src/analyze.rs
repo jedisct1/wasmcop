@@ -17,6 +17,8 @@ pub struct Finding {
     pub wasm_offset: Option<u32>,
     pub operator: Option<String>,
     pub source: Option<String>,
+    /// The wasm operator there can't explain this, so the compiler must have added it.
+    pub compiler_introduced: bool,
     pub runtime_function: Option<String>,
     pub occurrences: u64,
     pub kind: String,
@@ -36,6 +38,7 @@ impl Finding {
             wasm_offset: None,
             operator: None,
             source: None,
+            compiler_introduced: false,
             runtime_function: None,
             occurrences: 0,
             kind: error.kind.clone(),
@@ -132,6 +135,7 @@ pub fn analyze(output: &ValgrindOutput, code: &CodeMap, report: &Report, source:
                 native_offset: offset,
                 instruction: instruction.as_ref().map(format_instruction),
                 wasm_offset,
+                compiler_introduced: operator.as_deref().is_some_and(|op| !operator_explains(class, op)),
                 operator,
                 runtime_function: runtime_function.flatten(),
                 ..Finding::new(class, owner, function.name.clone(), error)
@@ -182,6 +186,19 @@ pub fn baseline_failures(output: &ValgrindOutput, report: &Report) -> Vec<String
         failures.push(format!("the run with no secrets still reported: {}", describe_host(error)));
     }
     failures
+}
+
+/// Whether a wasm operator could account for this class by itself.
+fn operator_explains(class: Class, operator: &str) -> bool {
+    let memory = operator.contains("load") || operator.contains("store") || operator.starts_with("memory");
+    let control = matches!(operator, "if" | "brif" | "brtable" | "callindirect" | "returncallindirect");
+    let arithmetic = operator.contains("div") || operator.contains("rem") || operator.contains("sqrt") || operator.contains("trunc");
+    match class {
+        Class::Branch => control || memory || arithmetic,
+        Class::MemoryAddress | Class::JumpTarget | Class::ControlTransfer => control || memory,
+        Class::VariableTime => arithmetic,
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -309,6 +326,14 @@ mod tests {
         assert!(warnings(Vec::new(), false)[0].contains("no secret"));
         assert!(warnings(Vec::new(), true).is_empty());
         assert!(warnings(vec![secret_error("UninitCondition", &[(0x1000, None)], 1)], false).is_empty());
+    }
+
+    #[test]
+    fn select_on_a_branch_is_flagged_as_compiler_introduced() {
+        assert!(!operator_explains(Class::Branch, "select"));
+        assert!(operator_explains(Class::Branch, "brif"));
+        assert!(operator_explains(Class::Branch, "i32load8u"));
+        assert!(!operator_explains(Class::MemoryAddress, "select"));
     }
 
     #[test]
