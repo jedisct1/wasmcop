@@ -137,6 +137,7 @@ pub fn analyze(output: &ValgrindOutput, code: &CodeMap, report: &Report, source:
                 wasm_offset,
                 compiler_introduced: operator.as_deref().is_some_and(|op| !operator_explains(class, op)),
                 operator,
+                source: wasm_offset.and_then(|o| source.line(o)),
                 runtime_function: runtime_function.flatten(),
                 ..Finding::new(class, owner, function.name.clone(), error)
             }

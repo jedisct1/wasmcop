@@ -21,6 +21,7 @@ wasmer-compiler.workspace = true
 wasmparser = "0.263"
 quick-xml = "0.42.0"
 iced-x86 = { version = "1.22.0", default-features = false, features = ["std", "decoder", "intel", "instr_info"] }
+addr2line = "0.27.1"
 serde.workspace = true
 tempfile = "3.27.0"
 wasmcop-spec.workspace = true
