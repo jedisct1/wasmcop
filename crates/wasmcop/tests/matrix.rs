@@ -126,6 +126,26 @@ fn the_reported_site_is_the_secret_one() {
 }
 
 #[test]
+fn source_lines_come_from_dwarf() {
+    let results = check_on(&fixture("dwarf.wasm"), "leak(secret bytes(8))", &Cell::defaults(&[Backend::Cranelift]));
+    let finding = results[0].analysis.findings.iter().find(|f| f.class == Class::Branch).unwrap();
+    assert_eq!(finding.function, "leak");
+    assert!(finding.source.as_deref().unwrap().ends_with("dwarf.c:2"), "{:?}", finding.source);
+}
+
+#[test]
+fn a_secret_simd_shift_count_means_the_analysis_is_incomplete() {
+    let results = check_on(&fixture("simd.wat"), "shift_by_secret(secret bytes(4, 1))", &Cell::defaults(&Backend::ALL));
+    assert!(results[0].skipped.as_deref().is_some_and(|reason| !reason.is_empty()), "singlepass can't compile SIMD, and that must only lose its own cell");
+    for result in &results[1..] {
+        // Valgrind sometimes keeps tracking the secret past the shift and sometimes doesn't, so only this part is guaranteed.
+        assert_eq!(result.skipped, None, "{}", result.cell);
+        assert!(classes_in(result, "shift_by_secret").contains("incomplete"), "{}", result.cell);
+        assert!(result.analysis.failures.iter().any(|f| f.contains("incomplete")), "{}", result.cell);
+    }
+}
+
+#[test]
 fn every_cell_of_the_full_matrix_works() {
     // A secret table lookup, which every backend and level has to report.
     let cells = Cell::full(&Backend::ALL, &CpuProfile::ALL);
