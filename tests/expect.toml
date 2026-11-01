@@ -1,0 +1,31 @@
+# Expected findings for each function in basic.wat, as [singlepass, cranelift, llvm].
+# Division is checked separately, since it depends on the Valgrind in use.
+
+[avx2]
+mem_ct = ["clean", "clean", "clean"]
+mem_branch = ["branch", "branch", "clean"]
+mem_branch_effect = ["branch", "branch", "branch"]
+arg_branch = ["branch", "branch", "clean"]
+arg_ct = ["clean", "clean", "clean"]
+mem_select = ["branch", "clean", "clean"]
+mem_fselect = ["branch", "branch", "memory-address"]
+mem_index = ["memory-address", "memory-address", "memory-address"]
+mem_brtable = ["branch,jump-target", "memory-address", "clean"]
+mem_callind = ["branch,memory-address", "branch,memory-address", "branch,memory-address"]
+mem_copy_len = ["libcall", "libcall", "libcall"]
+mem_copy_data = ["clean", "clean", "clean"]
+mem_clz = ["clean", "clean", "clean"]
+mem_ctz = ["clean", "clean", "clean"]
+mem_popcnt = ["clean", "clean", "clean"]
+mem_shift = ["clean", "clean", "clean"]
+mem_rotl = ["clean", "clean", "clean"]
+mem_cmp_value = ["clean", "clean", "clean"]
+mem_mul64 = ["clean", "clean", "clean"]
+
+[sse42]
+mem_clz = ["branch", "clean", "clean"]
+mem_ctz = ["branch", "clean", "clean"]
+
+[baseline]
+mem_clz = ["skip", "clean", "clean"]
+mem_ctz = ["skip", "clean", "clean"]

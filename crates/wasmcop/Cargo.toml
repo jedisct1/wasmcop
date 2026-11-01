@@ -29,3 +29,4 @@ wasmcop-spec.workspace = true
 [dev-dependencies]
 rand_chacha = "0.10"
 rand_core = "0.10.1"
+toml = "1.2.1"
