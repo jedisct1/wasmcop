@@ -135,6 +135,11 @@ impl ArtifactCode {
         Ok(CodeMap { functions })
     }
 
+    pub fn function_body(&self, shape: &ModuleShape, name: &str) -> Option<&[u8]> {
+        let index = self.functions.iter().enumerate().position(|(index, _)| function_name(shape, index as u32 + shape.imported_functions) == name)?;
+        Some(&self.functions[index].body)
+    }
+
     /// Every instruction whose speed can depend on its operands.
     pub fn variable_time_sites(&self, shape: &ModuleShape) -> Vec<UncheckedSite> {
         let mut sites = Vec::new();

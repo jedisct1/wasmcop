@@ -1,10 +1,13 @@
 mod support;
 
+use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction};
 use std::collections::BTreeMap;
 use support::*;
+use wasmcop::check::compile_cell;
 use wasmcop::classify::Class;
 use wasmcop::compile::{Backend, Cell, CpuProfile};
 use wasmcop::report::CellResult;
+use wasmcop_spec::module::ModuleShape;
 
 /// A script calling each function in basic.wat on a secret.
 fn calls(names: &[&String]) -> String {
@@ -88,6 +91,38 @@ fn findings_point_at_the_right_place() {
     // Singlepass has no mapping for its branches, and LLVM none at all.
     assert_eq!(operator_of(0, "arg_branch", Class::Branch), (false, None, false));
     assert!(results[2].analysis.findings.iter().all(|f| f.wasm_offset.is_none()));
+}
+
+#[test]
+fn the_reported_site_is_the_secret_one() {
+    let wasm = fixture("sites.wat");
+    let shape = ModuleShape::parse(&wasm).unwrap();
+    let script = "site_branch(secret bytes(4, 1), 1)\nsite_load(secret bytes(4, 1))";
+    let cells = Cell::defaults(&Backend::ALL);
+
+    for (cell, result) in cells.iter().zip(assert_clean(check_on(&wasm, script, &cells))) {
+        let compiled = compile_cell(&wasm, cell, 0).unwrap().unwrap();
+
+        // Decoded here without the classifier, so a wrong join can't agree with itself.
+        let walk = |name: &str| -> Vec<(u64, Instruction)> {
+            let mut decoder = Decoder::with_ip(64, compiled.code.function_body(&shape, name).unwrap(), 0, DecoderOptions::NONE);
+            let mut instructions = Vec::new();
+            while decoder.can_decode() {
+                let offset = decoder.ip();
+                instructions.push((offset, decoder.decode()));
+            }
+            instructions
+        };
+        let branch = result.analysis.findings.iter().find(|f| f.function == "site_branch").expect("a branch");
+        let branches: Vec<u64> = walk("site_branch").iter().filter(|(_, i)| i.flow_control() == FlowControl::ConditionalBranch).map(|(o, _)| *o).collect();
+        assert!(branches.len() >= 3, "{}: {branches:?}", result.cell);
+        assert_eq!(branch.native_offset, branches[1], "{}: the middle branch is the secret one", result.cell);
+
+        let load = result.analysis.findings.iter().find(|f| f.function == "site_load").expect("a load");
+        let instruction = load.instruction.as_deref().unwrap();
+        assert!(walk("site_load").iter().any(|(o, _)| *o == load.native_offset), "{}: not an instruction boundary", result.cell);
+        assert!(!instruction.contains("0x800") && !instruction.contains("0x808"), "{}: {instruction} is a public load", result.cell);
+    }
 }
 
 #[test]
