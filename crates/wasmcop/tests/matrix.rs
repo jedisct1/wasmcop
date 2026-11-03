@@ -2,6 +2,7 @@ mod support;
 
 use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction};
 use std::collections::BTreeMap;
+use std::process::Command;
 use support::*;
 use wasmcop::check::compile_cell;
 use wasmcop::classify::Class;
@@ -159,4 +160,27 @@ fn every_cell_of_the_full_matrix_works() {
             Some(reason) => assert_eq!((cell.backend, cell.cpu), (Backend::Singlepass, CpuProfile::Baseline), "{reason}"),
         }
     }
+}
+
+#[test]
+fn exit_codes_from_the_command_line() {
+    let module = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/basic.wat");
+    let run = |extra: &[&str], call: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_wasmcop")).args(["check", module, "--iterations", "1", "--call", call]).args(extra).output().unwrap();
+        (output.status.code(), String::from_utf8_lossy(&output.stdout).into_owned())
+    };
+    let cranelift = ["--backend", "cranelift"];
+
+    let (code, text) = run(&cranelift, "mem_ct(secret bytes(32))");
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains("no findings"));
+    let (code, text) = run(&cranelift, "mem_index(secret bytes(32))");
+    assert_eq!(code, Some(1), "{text}");
+    assert!(text.contains("MEMORY-ADDRESS in mem_index"));
+    let (code, text) = run(&cranelift, "trap_unreachable(secret bytes(32))");
+    assert_eq!(code, Some(2), "{text}");
+    assert!(text.contains("FAILED"));
+
+    let (code, text) = run(&["--backend", "cranelift,cranelift", "--cpu", "avx2,avx2"], "mem_ct(secret bytes(32))");
+    assert_eq!(code, Some(0), "repeated selections: {text}");
 }
