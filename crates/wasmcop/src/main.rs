@@ -6,6 +6,7 @@ use wasmcop::check::{Settings, check};
 use wasmcop::compile::{Backend, Cell, CpuProfile};
 use wasmcop::valgrind::{Valgrind, find_runner};
 use wasmcop_spec::module::{ImportItem, ModuleShape};
+use wasmcop_spec::file::SpecFile;
 use wasmcop_spec::resolve::{Options, TestCase};
 use wasmcop_spec::syntax::{Statement, parse_call};
 
@@ -24,7 +25,7 @@ enum Format {
 
 #[derive(clap::Args)]
 struct CheckArgs {
-    /// A .wasm or .wat module
+    /// A .wasm or .wat module, or a .toml spec file
     input: PathBuf,
     /// A function to call, like 'mac(tag: out(32), m: bytes(64), len(m), k: secret bytes(32))'
     #[arg(long = "call")]
@@ -125,15 +126,27 @@ fn tests_from_calls(calls: &[String]) -> Result<Vec<TestCase>> {
     Ok(tests)
 }
 
-fn run_check(args: &CheckArgs) -> Result<ExitCode> {
-    if args.calls.is_empty() {
-        bail!("say what to call with --call 'function(arguments)'");
-    }
-    let wasm = wasmcop::read_module(&args.input)?;
-    let tests = tests_from_calls(&args.calls)?;
-    let mut options = Options::default();
+/// What to run, from either a spec file or `--call` options.
+fn load_tests(args: &CheckArgs) -> Result<(Vec<u8>, Vec<TestCase>, Options)> {
+    let (wasm, tests, mut options) = if args.input.extension().is_some_and(|extension| extension == "toml") {
+        if !args.calls.is_empty() {
+            bail!("--call can't be combined with a spec file. Add the call to the file instead");
+        }
+        let file = SpecFile::load(&args.input)?;
+        (wasmcop::read_module(&file.wasm)?, file.tests, file.options)
+    } else {
+        if args.calls.is_empty() {
+            bail!("say what to call with --call 'function(arguments)', or use a .toml spec file");
+        }
+        (wasmcop::read_module(&args.input)?, tests_from_calls(&args.calls)?, Options::default())
+    };
     options.seed = args.seed.unwrap_or(options.seed);
     options.iterations = args.iterations.unwrap_or(options.iterations);
+    Ok((wasm, tests, options))
+}
+
+fn run_check(args: &CheckArgs) -> Result<ExitCode> {
+    let (wasm, tests, options) = load_tests(args)?;
     if options.iterations == 0 {
         bail!("iterations must be at least 1");
     }

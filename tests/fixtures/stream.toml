@@ -1,0 +1,18 @@
+wasm = "stream.wat"
+iterations = 2
+
+[[test]]
+name = "streaming"
+steps = """
+state = out(8)
+key = secret bytes(8)
+tag = out(8)
+init(state, key)
+update(state)
+finish(state, tag)
+branch_on(tag)
+"""
+
+[[test]]
+name = "wrong length"
+call = "early_exit(secret bytes(16), 16)"

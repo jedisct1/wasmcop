@@ -1,8 +1,12 @@
 mod support;
 
+use std::path::Path;
+use std::process::Command;
 use support::*;
 use wasmcop::compile::{Backend, Cell};
 use wasmcop::report::CheckReport;
+use wasmcop_job::Job;
+use wasmcop_spec::resolve::random_key;
 
 fn run(script: &str, blame: bool) -> CheckReport {
     let report = check_with(&fixture("stream.wat"), script, &Cell::defaults(&[Backend::Cranelift]), &options(), default_valgrind(), blame);
@@ -42,4 +46,24 @@ fn blame_names_the_secret_or_says_it_cant() {
         assert_eq!(findings[0].reached_from, Vec::<String>::new(), "{script}");
         assert!(report.to_text().contains("may take several together"));
     }
+}
+
+#[test]
+fn spec_files_from_the_command_line() {
+    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/stream.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_wasmcop")).arg("check").arg(&spec).args(["--backend", "cranelift"]).output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(text.contains("streaming") && text.contains("BRANCH in branch_on"), "{text}");
+    assert!(text.contains("wrong length") && text.contains("no secret reached"), "{text}");
+
+    let misuse = Command::new(env!("CARGO_BIN_EXE_wasmcop")).arg("check").arg(&spec).args(["--call", "f()"]).output().unwrap();
+    assert_eq!(misuse.status.code(), Some(2));
+
+    // The command line wins over the file, which asks for 2 iterations.
+    let dir = scratch();
+    Command::new(env!("CARGO_BIN_EXE_wasmcop")).arg("check").arg(&spec).args(["--backend", "cranelift", "--iterations", "1", "--seed", "9", "--work-dir"]).arg(dir.path()).output().unwrap();
+    let job: Job = serde_json::from_slice(&std::fs::read(dir.path().join("test-0/cranelift-Speed-avx2/main/job.json")).unwrap()).unwrap();
+    assert_eq!(job.iterations.len(), 1);
+    assert_eq!(job.iterations[0].random_key, random_key(9, "streaming", 0));
 }
