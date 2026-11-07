@@ -58,3 +58,61 @@ Argument types come from the module, so you never write `i32`.
 Each test runs four times by default, with random secrets, all zeros, all ones, and random again.
 
 Use `--iterations` to change that, and add more `--call` options to try different public inputs.
+
+### More options
+
+`--backend cranelift,llvm` picks backends.
+
+`--full` tries every optimization level and CPU profile.
+
+`--blame` works out which secret causes each finding.
+
+`--format json` gives you everything, including what the text report leaves out.
+
+## Multi-step tests
+
+Stateful APIs need more than one call. Put them in a TOML file and run `wasmcop check test.toml`:
+
+```toml
+wasm = "hmac.wasm"
+iterations = 8
+
+[[test]]
+name = "streaming"
+steps = """
+st = out(256)
+key = secret bytes(32)
+msg = bytes(1024)
+hmac_init(st, key, len(key))
+hmac_update(st, msg, len(msg))
+tag = out(32)
+hmac_final(st, tag)
+expect(tag, hex(5bdcc146bf60754e...))
+declassify(tag)
+ok = hmac_verify(tag, key)
+"""
+```
+
+Secrets stay secret from one call to the next.
+
+`expect` checks an output against a known answer.
+
+It's worth using, because it proves the test really exercised the function.
+
+`declassify` is for results that really are public, such as a tag before comparing it.
+
+`poison` marks something as secret.
+
+The file can also set `seed`, `alloc = "grow"` or `alloc = "export:my_malloc"`, and a `[wasi]` table with `args` and `env`.
+
+The output of `random_get` is secret unless you set `random = "public"`.
+
+An `[imports]` table says what to do about imports Wasmcop doesn't know:
+
+```toml
+[imports]
+"env.abort" = "trap"
+"env.getpid" = 1
+```
+
+WASI preview 1 is built in. Time and randomness are fixed by the test, so runs are reproducible.
