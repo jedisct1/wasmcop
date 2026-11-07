@@ -1,6 +1,7 @@
 **/*.rs.bk
 **/mutants.out*/
 *.pdb
+Cargo.lock
 debug
 rustc-ice-*.txt
 target
