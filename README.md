@@ -116,3 +116,16 @@ An `[imports]` table says what to do about imports Wasmcop doesn't know:
 ```
 
 WASI preview 1 is built in. Time and randomness are fixed by the test, so runs are reproducible.
+
+## Marking secrets from inside a module
+
+If you can rebuild the code, it can import these from a module called `wasmcop`:
+
+| Function                                 | What it does                                   |
+| ---------------------------------------- | ---------------------------------------------- |
+| `poison(ptr, len)`                       | Marks memory as secret                         |
+| `declassify(ptr, len)`                   | Marks memory as public                         |
+| `assert_public(ptr, len)`                | Reports a finding if the memory holds a secret |
+| `declassify_i32(x)`, `declassify_i64(x)` | Returns `x`, now public                        |
+
+This is how you'd handle something like the rejection loop in a signature scheme, where leaking that a retry happened is fine.
