@@ -174,3 +174,20 @@ If you can rebuild the code, it can import these from a module called `wasmcop`:
 | `declassify_i32(x)`, `declassify_i64(x)` | Returns `x`, now public                        |
 
 This is how you'd handle something like the rejection loop in a signature scheme, where leaking that a retry happened is fine.
+
+## Limitations
+
+A clean report says no secret-dependent branch or memory access happened on the paths that ran, on the backends and CPU profiles you tested.
+
+It can still miss things:
+
+- Code that didn't run wasn't checked. Use several iterations, and try different lengths.
+- Division and square root are only checked with the patched Valgrind.
+  With a stock one the report lists them instead.
+- Conditional moves are assumed to be constant-time, which is the usual assumption but is about the CPU rather than the code.
+- Speculative execution isn't modeled, nor are effects like data-dependent prefetchers.
+- Valgrind can't run AVX-512, so code built for it isn't covered.
+- After Valgrind reports a value, it stops tracking that value for the rest of the basic block.
+  So when you fix a finding, run it again.
+
+Results are for the compiler versions built into Wasmcop. Another version can generate different code.
