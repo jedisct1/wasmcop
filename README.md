@@ -59,6 +59,23 @@ Anything not marked `secret` is public.
 wasmcop check hmac.wasm --call 'hmac(tag: out(32), m: bytes(64), len(m), k: secret bytes(32), len(k))'
 ```
 
+Here's the start of the report for an AES that uses lookup tables, from `tests/fixtures/aes_table.c`:
+
+```text
+aes128_encrypt
+                      singlepass  cranelift   llvm
+  branch                      20          0      0
+  memory-address              20         20     20
+
+  MEMORY-ADDRESS in aes128_encrypt at wasm 0xc9 (./tests/fixtures/aes_table.c:40) [singlepass, cranelift]
+    singlepass: movzx r8d, byte ptr [rax]
+    cranelift: movzx r14, byte ptr [rbx+r11+0x400]
+```
+
+Each finding says where it happened in the wasm and, if the module has debug info, in the source.
+
+LLVM doesn't record wasm offsets, and Singlepass only records them for memory accesses, so those findings give the function and native offset instead.
+
 The exit code is 0 if nothing was found, 1 if something was, and 2 if the analysis couldn't be trusted, for example because the code trapped.
 
 If it says 2, read the message before believing anything else in the report.
