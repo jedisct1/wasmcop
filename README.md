@@ -12,6 +12,34 @@ A wasm `select` on a secret is a conditional move on Cranelift and a real branch
 
 Linux on x86-64 only for now.
 
+## Installing
+
+You need Rust, Valgrind and LLVM 22.
+
+Wasmcop uses wasmer internally, and wasmer requires that LLVM version, so an older or newer one won't work.
+
+On Ubuntu, install `llvm-22-dev` and `libpolly-22-dev` for LLVM.
+
+Anywhere else, `scripts/fetch-llvm.sh` downloads a build.
+
+```sh
+make
+```
+
+That leaves `wasmcop` and `wasmcop-runner` in `target/release`.
+
+Keep the two together.
+
+Valgrind on its own can't see division on secrets, and that's a real source of timing leaks.
+
+To check it too, build a patched copy once:
+
+```sh
+scripts/build-valgrind.sh
+```
+
+Wasmcop finds it automatically. `wasmcop doctor` tells you what it found and what's missing.
+
 ## Checking a function
 
 `wasmcop list` shows what a module exports:
