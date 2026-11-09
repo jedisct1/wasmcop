@@ -1,0 +1,9 @@
+wasm = "select.wasm"
+
+[[test]]
+name = "masks"
+call = "choose_masked(secret rand, 11, 22)"
+
+[[test]]
+name = "masks the compiler can't see through"
+call = "choose_opaque(secret rand, 11, 22)"

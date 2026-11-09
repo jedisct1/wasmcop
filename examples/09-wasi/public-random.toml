@@ -1,0 +1,7 @@
+# For something like a nonce, where the random value doesn't need to stay secret.
+wasm = "keygen.wasm"
+random = "public"
+
+[[test]]
+name = "retries on a zero byte"
+call = "keygen_retry(nonce: out(12), len(nonce))"

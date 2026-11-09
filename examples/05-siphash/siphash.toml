@@ -1,0 +1,52 @@
+wasm = "siphash.wasm"
+iterations = 8
+seed = 2026
+
+# The test vector from the SipHash paper, in one shot and then in two pieces.
+[[test]]
+name = "known answer"
+steps = """
+key = secret hex(000102030405060708090a0b0c0d0e0f)
+tag = out(8)
+siphash(tag, m: hex(000102030405060708090a0b0c0d0e), len(m), key)
+expect(tag, hex(e545be4961ca29a1))
+
+state = out(48)
+siphash_init(state, key)
+first = hex(0001020304)
+siphash_update(state, first, len(first))
+second = hex(05060708090a0b0c0d0e)
+siphash_update(state, second, len(second))
+streamed = out(8)
+siphash_final(state, streamed)
+expect(streamed, hex(e545be4961ca29a1))
+"""
+
+# Lengths on both sides of the 8-byte block size.
+[[test]]
+name = "secret message of several lengths"
+steps = """
+key = secret bytes(16)
+tag = out(8)
+siphash(tag, m: secret bytes(7), len(m), key)
+siphash(tag, m: secret bytes(8), len(m), key)
+siphash(tag, m: secret bytes(9), len(m), key)
+"""
+
+# Whether a tag was accepted is public, and so is the tag itself once it's sent.
+# Delete `declassify(tag)` and the lookups in hex_encode get reported.
+[[test]]
+name = "using a tag"
+steps = """
+tag = out(8)
+siphash(tag, m: bytes(20), len(m), secret bytes(16))
+
+ok = siphash_verify(tag, bytes(8))
+declassify(ok)
+plaintext = out(20)
+release_message(ok, plaintext, m, len(m))
+
+declassify(tag)
+text = out(16)
+hex_encode(text, tag, len(tag))
+"""

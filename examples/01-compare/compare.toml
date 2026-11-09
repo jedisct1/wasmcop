@@ -1,0 +1,10 @@
+wasm = "compare.wasm"
+
+# `tag:` gives the argument a name, so `len(tag)` can use it.
+[[test]]
+name = "stops early"
+call = "compare_leaky(tag: secret bytes(16), given: bytes(16), len(tag))"
+
+[[test]]
+name = "constant time"
+call = "compare_ct(tag: secret bytes(16), given: bytes(16), len(tag))"

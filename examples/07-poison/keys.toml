@@ -1,0 +1,22 @@
+wasm = "keys.wasm"
+
+# derive_key runs on public data, so it isn't what's being checked.
+[[test]]
+name = "derived key"
+steps = """
+key = out(16)
+derive_key(key, bytes(16))
+poison(key)
+key_checksum(key)
+key_is_all_zeros(key)
+"""
+
+# The same thing by address, for memory the test has no name for.
+[[test]]
+name = "a public id at the start of a secret key"
+steps = """
+key = bytes(16, at=4096)
+poison(4096, 16)
+declassify(4096, 4)
+key_id_is_known(key)
+"""

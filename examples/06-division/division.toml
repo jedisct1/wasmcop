@@ -1,0 +1,13 @@
+wasm = "division.wasm"
+
+[[test]]
+name = "dividing by a constant"
+call = "compress_div(secret rand)"
+
+[[test]]
+name = "multiplying instead"
+call = "compress_mul(secret rand)"
+
+[[test]]
+name = "dividing by a secret"
+call = "reduce(1000, secret rand)"

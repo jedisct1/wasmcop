@@ -1,0 +1,20 @@
+# Every test here is wrong on purpose.
+wasm = "broken.wasm"
+iterations = 1
+
+# The key is 16 bytes, and mac() only reads 32-byte ones.
+[[test]]
+name = "the secret is never used"
+call = "mac(key: secret bytes(16), len(key))"
+
+[[test]]
+name = "wrong known answer"
+steps = """
+result = out(1)
+increment(result, hex(41))
+expect(result, hex(41))
+"""
+
+[[test]]
+name = "out of bounds"
+call = "read_at(data: secret bytes(16), len(data), 16)"

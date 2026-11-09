@@ -1,0 +1,17 @@
+wasm = "annotated.wasm"
+
+[[test]]
+name = "rejection loop, nothing declassified"
+call = "sample(stream: secret bytes(64), len(stream))"
+
+[[test]]
+name = "rejection loop, decision declassified"
+call = "sample_declassified(stream: secret bytes(64), len(stream))"
+
+[[test]]
+name = "key inside the module"
+call = "device_key_fingerprint()"
+
+[[test]]
+name = "sending a secret"
+call = "send_packet(packet: secret bytes(32), len(packet))"

@@ -1,0 +1,12 @@
+wasm = "sealed.wasm"
+
+# Buffers have to come from the module's own allocator, or seal() aborts.
+alloc = "export:my_alloc"
+
+[imports]
+"env.device_id" = 7
+"env.abort" = "trap"
+
+[[test]]
+name = "key from the module's own heap"
+call = "seal(key: secret bytes(32), len(key))"

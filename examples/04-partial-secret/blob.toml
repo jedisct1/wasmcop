@@ -1,0 +1,9 @@
+wasm = "blob.wasm"
+
+[[test]]
+name = "branches on the salt"
+call = "digest(bytes(64, secret=16..48), out(4))"
+
+[[test]]
+name = "branches on the key"
+call = "digest_as_string(bytes(64, secret=16..48), out(4))"

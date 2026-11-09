@@ -1,0 +1,34 @@
+# Nothing here is marked secret, because whatever random_get returns already is.
+wasm = "keygen.wasm"
+
+[wasi]
+args = ["keygen", "32"]
+env = { KEY_LABEL = "prod" }
+
+[[test]]
+name = "retries on a zero byte"
+call = "keygen_retry(key: out(32), len(key))"
+
+[[test]]
+name = "debug print"
+steps = """
+key = out(32)
+keygen(key, len(key))
+print_key(key, len(key))
+"""
+
+# The expected values are 32 as a little-endian number, and KEY_LABEL=prod in ASCII.
+[[test]]
+name = "no retries, with arguments and environment"
+steps = """
+size = out(4)
+key_size_from_args(size)
+expect(size, hex(20000000))
+
+variable = out(14)
+first_env_var(variable, len(variable))
+expect(variable, hex(4b45595f4c4142454c3d70726f64))
+
+key = out(32)
+keygen(key, len(key))
+"""

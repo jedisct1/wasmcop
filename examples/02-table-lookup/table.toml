@@ -1,0 +1,14 @@
+wasm = "table.wasm"
+
+[[test]]
+name = "lookup"
+call = "sbox_leaky(secret rand)"
+
+[[test]]
+name = "full scan"
+call = "sbox_ct(secret rand)"
+
+# Run with --blame to see that the key causes this, not the message.
+[[test]]
+name = "two secrets"
+call = "encrypt(out(8), message: secret bytes(8), key: secret bytes(8))"
