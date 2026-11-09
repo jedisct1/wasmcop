@@ -1,7 +1,11 @@
 **/*.rs.bk
 **/mutants.out*/
 *.pdb
+*~
+.swival
 Cargo.lock
+LOG.md
+api-faq.md
 debug
 rustc-ice-*.txt
 target
