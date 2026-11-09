@@ -69,9 +69,9 @@ aes128_encrypt
   branch                      20          0      0
   memory-address              20         20     20
 
-  MEMORY-ADDRESS in aes128_encrypt at wasm 0xc9 (./tests/fixtures/aes_table.c:40) [singlepass, cranelift]
+  MEMORY-ADDRESS in aes128_encrypt at wasm 0x10b (./tests/fixtures/aes_table.c:40) [singlepass, cranelift]
     singlepass: movzx r8d, byte ptr [rax]
-    cranelift: movzx r14, byte ptr [rbx+r11+0x400]
+    cranelift: movzx r12, byte ptr [r14+rcx+0x100000]
 ```
 
 Each finding says where it happened in the wasm and, if the module has debug info, in the source.
@@ -176,6 +176,10 @@ If you can rebuild the code, it can import these from a module called `wasmcop`:
 | `declassify_i32(x)`, `declassify_i64(x)` | Returns `x`, now public                        |
 
 This is how you'd handle something like the rejection loop in a signature scheme, where leaking that a retry happened is fine.
+
+## Examples
+
+The `examples` directory has complete programs with their spec files.
 
 ## Limitations
 

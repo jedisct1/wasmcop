@@ -75,4 +75,4 @@ void aes128_encrypt(uint8_t out[16], const uint8_t in[16], const uint8_t key[16]
     }
 }
 
-/* The .wasm next to this file was built with clang 21: clang --target=wasm32 -O2 -g -nostdlib -fdebug-prefix-map=$PWD=. -Wl,--no-entry -Wl,--export=aes128_encrypt -o tests/fixtures/aes_table.wasm tests/fixtures/aes_table.c */
+/* The .wasm next to this file was built with Zig 0.18: zig cc -target wasm32-freestanding -O2 -g -nostdlib -fdebug-prefix-map=$PWD=. -Wl,--no-entry -Wl,--export=aes128_encrypt -o tests/fixtures/aes_table.wasm tests/fixtures/aes_table.c */

@@ -1,5 +1,6 @@
 #!/bin/sh
 # Builds a Valgrind that also reports division and square root on secrets, and installs it in your cache directory, where Wasmcop finds it.
+# This uses the system C compiler, because zig cc can't link Valgrind's tools at the fixed address they need.
 set -eu
 
 version=3.26.0
