@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".media/logo2.png" alt="Wasmcop — WebAssembly constant-time analysis" width="720">
+</p>
+
 # Wasmcop
 
 Wasmcop checks whether the native code generated for a WebAssembly module handles secrets in constant time.
