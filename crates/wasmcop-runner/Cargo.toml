@@ -1,7 +1,17 @@
 [package]
 name = "wasmcop-runner"
+description = "The program the wasmcop constant-time checker runs under Valgrind to execute WebAssembly modules with secrets marked"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include.workspace = true
 
 [dependencies]
 wasmcop-job.workspace = true

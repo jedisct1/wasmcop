@@ -1,7 +1,21 @@
 [package]
 name = "wasmcop"
+description = "Checks whether the native code generated for a WebAssembly module handles secrets in constant time"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["cryptography", "wasm", "development-tools::testing", "command-line-utilities"]
+include.workspace = true
+
+# docs.rs doesn't have LLVM 22.
+[package.metadata.docs.rs]
+no-default-features = true
 
 [features]
 default = ["llvm"]

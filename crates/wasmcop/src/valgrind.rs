@@ -6,7 +6,7 @@ use std::process::Command;
 use wasmcop_job::{Job, Report};
 
 /// Normally empty: noise from the host should fail the run, not get hidden.
-const SUPPRESSIONS: &str = include_str!("../../../valgrind/wasmcop.supp");
+const SUPPRESSIONS: &str = include_str!("wasmcop.supp");
 
 #[derive(Debug)]
 pub struct Run {

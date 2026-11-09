@@ -1,3 +1,5 @@
+//! Checks whether the native code generated for a WebAssembly module handles secrets in constant time.
+
 pub mod analyze;
 pub mod check;
 pub mod classify;

@@ -5,10 +5,20 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.96"
+authors = ["Frank Denis <github@pureftpd.org>"]
+license = "MIT"
+homepage = "https://github.com/jedisct1/wasmcop"
+repository = "https://github.com/jedisct1/wasmcop"
+readme = "README.md"
+keywords = ["wasm", "webassembly", "constant-time", "side-channel", "valgrind"]
+categories = ["cryptography", "wasm", "development-tools::testing"]
+include = ["/src/**", "/LICENSE"]
 
+# The driver and the runner exchange job files, so all the crates have to be the same version.
 [workspace.dependencies]
-wasmcop-job = { path = "crates/wasmcop-job" }
-wasmcop-spec = { path = "crates/wasmcop-spec" }
+wasmcop-job = { path = "crates/wasmcop-job", version = "=0.1.0" }
+wasmcop-spec = { path = "crates/wasmcop-spec", version = "=0.1.0" }
 wasmer = { version = "=7.5.0", default-features = false }
 wasmer-compiler = { version = "=7.5.0", default-features = false }
 wasmer-types = { version = "=7.5.0", default-features = false }
