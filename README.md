@@ -6,6 +6,8 @@ You give it a `.wasm` file, say which function to call and which arguments are s
 
 It compiles the module with Singlepass, Cranelift and LLVM, runs the result under Valgrind with the secrets marked as uninitialized memory, and tells you about every branch and memory access that depended on them.
 
+Cranelift is also the compiler behind Wasmtime, and LLVM is the one behind WasmEdge, so those results apply there too, though another compiler version or different settings can change the generated code.
+
 The same module can be fine on one backend and leak on another.
 
 A wasm `select` on a secret is a conditional move on Cranelift and a real branch on Singlepass.
