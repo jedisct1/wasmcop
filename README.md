@@ -36,6 +36,17 @@ That leaves `wasmcop` and `wasmcop-runner` in `target/release`.
 
 Keep the two together.
 
+Or install them from crates.io:
+
+```sh
+cargo install wasmcop-runner
+cargo install wasmcop
+```
+
+They end up next to each other in `~/.cargo/bin`.
+
+If LLVM 22 isn't found, set `LLVM_SYS_221_PREFIX` to where it's installed.
+
 Valgrind on its own can't see division on secrets, and that's a real source of timing leaks.
 
 To check it too, build a patched copy once:
