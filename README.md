@@ -27,7 +27,7 @@ A wasm `select` on a secret is a conditional move on Cranelift and a real branch
 
 A secret divided by a constant stays a real `div` on Singlepass, but turns into a multiplication on Cranelift and LLVM.
 
-Linux on x86-64 only for now.
+**LINUX ON X86-64 ONLY FOR NOW.**
 
 ## Installing
 
