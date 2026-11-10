@@ -10,9 +10,7 @@ You give it a `.wasm` file, say which function to call and which arguments are s
 
 It compiles the module with Singlepass, Cranelift and LLVM, runs the result under Valgrind with the secrets marked as uninitialized memory, and tells you about every branch and memory access that depended on them.
 
-It also catches potential KyberSlash-like vulnerabilities, where the time a division takes gives away a secret.
-
-Stock Valgrind can't see those, so you'll need the patched build from [Installing](#installing).
+It also catches potential KyberSlash-like vulnerabilities (requires a patch for Valgrind), where the time a division takes gives away a secret.
 
 Cranelift is also the compiler behind Wasmtime, and LLVM is the one behind WasmEdge, so those results apply there too, though another compiler version or different settings can change the generated code.
 
