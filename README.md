@@ -16,6 +16,11 @@ Stock Valgrind can't see those, so you'll need the patched build from [Installin
 
 Cranelift is also the compiler behind Wasmtime, and LLVM is the one behind WasmEdge, so those results apply there too, though another compiler version or different settings can change the generated code.
 
+WebAssembly usually goes through two compilers: one from source to WebAssembly, then another from WebAssembly to native code.
+The first makes decisions such as inlining and loop unrolling without knowing exactly how the second will translate them, making optimization harder.
+
+Writing constant-time code is harder too: both compilers must preserve it, and either can introduce timing side channels.
+
 The same module can be fine on one backend and leak on another.
 
 A wasm `select` on a secret is a conditional move on Cranelift and a real branch on Singlepass.
