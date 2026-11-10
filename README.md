@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".media/logo2.png" alt="Wasmcop — WebAssembly constant-time analysis" width="720">
+  <img src="https://raw.githubusercontent.com/jedisct1/wasmcop/main/.media/logo2.png" alt="Wasmcop — WebAssembly constant-time analysis" width="720">
 </p>
 
 # Wasmcop
